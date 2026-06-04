@@ -8,9 +8,16 @@ ROOT := $(abspath $(dir $(THIS_MAKEFILE))/..)
 ifeq ($(origin CC),default)
 CC := i686-w64-mingw32-gcc
 endif
+ifeq ($(origin RC),undefined)
+RC := i686-w64-mingw32-windres
+endif
 
 TARGET = $(ROOT)/bdm-win32.exe
 BUILD = $(ROOT)/build/win32
+FAVICON ?= $(ROOT)/favicon.ico
+ICON_RC = $(BUILD)/bdm_icon.rc
+ICON_RES := $(if $(wildcard $(FAVICON)),$(BUILD)/bdm_icon.res.o,)
+RCFLAGS ?= --codepage=65001 --output-format=coff --target=pe-i386
 DEFS = -DWIN32_LEAN_AND_MEAN -DNOMINMAX -D_CRT_SECURE_NO_WARNINGS -DWINVER=0x0400 -D_WIN32_WINDOWS=0x0400 -DBDM_WIN32_WIN95 -DBDM_WIN32_GDI_ONLY
 INCLUDES = -I$(ROOT)/include -I$(ROOT)/src/core -I$(ROOT)/src/win32
 CFLAGS ?= -std=c11 -O2 -Wall -Wextra -Wno-unused-parameter $(DEFS) $(INCLUDES)
@@ -30,7 +37,7 @@ WIN_SRC = \
   $(ROOT)/src/win32/bdm_win32_video.c \
   $(ROOT)/src/win32/bdm_win32_sdl_input.c
 SRC = $(CORE_SRC) $(WIN_SRC)
-OBJ = $(patsubst $(ROOT)/%.c,$(BUILD)/%.o,$(SRC))
+OBJ = $(patsubst $(ROOT)/%.c,$(BUILD)/%.o,$(SRC)) $(ICON_RES)
 
 all: app
 app: $(TARGET)
@@ -42,8 +49,24 @@ check-toolchain:
 		exit 1; \
 	}
 
-$(TARGET): $(OBJ) | check-toolchain
+check-resource-toolchain:
+ifneq ($(strip $(ICON_RES)),)
+	@command -v $(RC) >/dev/null 2>&1 || { \
+		echo "missing MinGW-w64 32-bit resource compiler: $(RC)" >&2; \
+		echo "Install windres or run: make -f Makefile.win32 RC=/path/to/i686-w64-mingw32-windres FAVICON=/path/to/favicon.ico" >&2; \
+		exit 1; \
+	}
+endif
+
+$(TARGET): $(OBJ) | check-toolchain check-resource-toolchain
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LDLIBS)
+
+$(ICON_RC): $(FAVICON) | check-resource-toolchain
+	@mkdir -p $(dir $@)
+	printf '1 ICON "%s"\n' "$(FAVICON)" > $@
+
+$(ICON_RES): $(ICON_RC)
+	$(RC) $(RCFLAGS) -i $< -o $@
 
 $(BUILD)/%.o: $(ROOT)/%.c | check-toolchain
 	@mkdir -p $(dir $@)
@@ -52,4 +75,4 @@ $(BUILD)/%.o: $(ROOT)/%.c | check-toolchain
 clean:
 	rm -rf $(BUILD) $(TARGET)
 
-.PHONY: all app check-toolchain clean
+.PHONY: all app check-toolchain check-resource-toolchain clean

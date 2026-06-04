@@ -11,13 +11,17 @@ endif
 ifeq ($(origin CXX),default)
 CXX := x86_64-w64-mingw32-g++
 endif
-ifeq ($(origin RC),default)
+ifeq ($(origin RC),undefined)
 RC := x86_64-w64-mingw32-windres
 endif
 
 PKG_CONFIG ?= pkg-config
 TARGET = $(ROOT)/bdm-win64.exe
 BUILD = $(ROOT)/build/win64
+FAVICON ?= $(ROOT)/favicon.ico
+ICON_RC = $(BUILD)/bdm_icon.rc
+ICON_RES := $(if $(wildcard $(FAVICON)),$(BUILD)/bdm_icon.res.o,)
+RCFLAGS ?= --codepage=65001 --output-format=coff --target=pe-x86-64
 SDL_PREFIX = $(ROOT)/third_party/sdl/install/win64
 SDL_PC = $(SDL_PREFIX)/lib/pkgconfig
 SDL_CFLAGS_PKG := $(shell PKG_CONFIG_LIBDIR="$(SDL_PC)" PKG_CONFIG_PATH= $(PKG_CONFIG) --cflags sdl3 2>/dev/null)
@@ -48,7 +52,7 @@ WIN_SRC = \
   $(ROOT)/src/win32/bdm_win32_video.c \
   $(ROOT)/src/win32/bdm_win32_sdl_input.c
 SRC = $(CORE_SRC) $(WIN_SRC)
-OBJ = $(patsubst $(ROOT)/%.c,$(BUILD)/%.o,$(SRC))
+OBJ = $(patsubst $(ROOT)/%.c,$(BUILD)/%.o,$(SRC)) $(ICON_RES)
 
 all: app
 
@@ -64,6 +68,15 @@ check-toolchain:
 		exit 1; \
 	}
 
+check-resource-toolchain:
+ifneq ($(strip $(ICON_RES)),)
+	@command -v $(RC) >/dev/null 2>&1 || { \
+		echo "missing MinGW-w64 64-bit resource compiler: $(RC)" >&2; \
+		echo "Install windres or run: make -f Makefile.win64 RC=/path/to/x86_64-w64-mingw32-windres FAVICON=/path/to/favicon.ico" >&2; \
+		exit 1; \
+	}
+endif
+
 sdl: check-toolchain
 	CC="$(CC)" CXX="$(CXX)" RC="$(RC)" $(ROOT)/scripts/build_sdl3_mingw.sh win64
 
@@ -73,8 +86,15 @@ check-sdl: sdl
 	@test -f "$(SDL_PREFIX)/include/SDL3/SDL.h" || { echo "SDL3 headers missing; run make -f Makefile.win64 sdl"; exit 1; }
 	@test -f "$(SDL_PREFIX)/lib/libSDL3.a" || { echo "SDL3 static library missing; run make -f Makefile.win64 sdl"; exit 1; }
 
-$(TARGET): $(OBJ) | check-sdl
+$(TARGET): $(OBJ) | check-sdl check-resource-toolchain
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LDLIBS)
+
+$(ICON_RC): $(FAVICON) | check-resource-toolchain
+	@mkdir -p $(dir $@)
+	printf '1 ICON "%s"\n' "$(FAVICON)" > $@
+
+$(ICON_RES): $(ICON_RC)
+	$(RC) $(RCFLAGS) -i $< -o $@
 
 $(BUILD)/%.o: $(ROOT)/%.c | check-sdl
 	@mkdir -p $(dir $@)
@@ -86,4 +106,4 @@ clean:
 sdl-clean:
 	rm -rf $(ROOT)/third_party/sdl/build/win64 $(ROOT)/third_party/sdl/install/win64
 
-.PHONY: all sdl app check-toolchain check-sdl clean sdl-clean
+.PHONY: all sdl app check-toolchain check-resource-toolchain check-sdl clean sdl-clean
