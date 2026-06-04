@@ -1,0 +1,73 @@
+CC ?= cc
+CFLAGS ?= -std=c11 -O2 -Wall -Wextra -Wpedantic
+CPPFLAGS ?= -Iinclude -Isrc/core
+LDFLAGS ?=
+SDL_CONFIG ?= sdl-config
+SDL_CFLAGS ?= $(shell $(SDL_CONFIG) --cflags 2>/dev/null)
+SDL_LIBS ?= $(shell $(SDL_CONFIG) --libs 2>/dev/null)
+HAVE_SDL := $(shell $(SDL_CONFIG) --version >/dev/null 2>&1 && echo 1)
+
+PKG_CONFIG ?= pkg-config
+SDL3_PKG ?= sdl3
+SDL3_CFLAGS ?= $(shell $(PKG_CONFIG) --cflags $(SDL3_PKG) 2>/dev/null)
+SDL3_LIBS ?= $(shell $(PKG_CONFIG) --libs $(SDL3_PKG) 2>/dev/null)
+HAVE_SDL3 := $(shell $(PKG_CONFIG) --exists $(SDL3_PKG) >/dev/null 2>&1 && echo 1)
+
+CORE_SRC = \
+  src/core/h8.c \
+  src/core/bdm_core.c \
+  src/video/bdm_video.c \
+  src/input/bdm_input.c \
+  src/sound/bdm_sound.c
+
+CORE_OBJ = $(CORE_SRC:.c=.o)
+HEADLESS_OBJ = src/frontend/bdm_headless.o
+SDL_OBJ = src/frontend/bdm_sdl.o
+SDL3_OBJ = src/frontend/bdm_sdl3.o
+
+.PHONY: all clean sdl sdl3 wasm wasm-serve win32 win64 qt appimage
+
+all: bdm_headless
+ifeq ($(HAVE_SDL),1)
+all: bdm_sdl
+endif
+ifeq ($(HAVE_SDL3),1)
+all: bdm_sdl3
+endif
+
+sdl: bdm_sdl
+sdl3: bdm_sdl3
+wasm:
+	$(MAKE) -f Makefile.wasm build
+wasm-serve:
+	$(MAKE) -f Makefile.wasm serve
+
+win32:
+	$(MAKE) -f Makefile.win32
+win64:
+	$(MAKE) -f Makefile.win64
+qt:
+	qmake6 BDMEmu.pro && $(MAKE)
+appimage:
+	packaging/make_appimage.sh
+
+bdm_headless: $(CORE_OBJ) $(HEADLESS_OBJ)
+	$(CC) $(CFLAGS) $(CORE_OBJ) $(HEADLESS_OBJ) -o $@ $(LDFLAGS)
+
+bdm_sdl: $(CORE_OBJ) $(SDL_OBJ)
+	$(CC) $(CFLAGS) $(CORE_OBJ) $(SDL_OBJ) -o $@ $(LDFLAGS) $(SDL_LIBS)
+
+bdm_sdl3: $(CORE_OBJ) $(SDL3_OBJ)
+	$(CC) $(CFLAGS) $(CORE_OBJ) $(SDL3_OBJ) -o $@ $(LDFLAGS) $(SDL3_LIBS)
+
+src/frontend/bdm_sdl.o: src/frontend/bdm_sdl.c
+	$(CC) $(CPPFLAGS) $(SDL_CFLAGS) $(CFLAGS) -c $< -o $@
+
+src/frontend/bdm_sdl3.o: src/frontend/bdm_sdl3.c
+	$(CC) $(CPPFLAGS) $(SDL3_CFLAGS) $(CFLAGS) -c $< -o $@
+
+%.o: %.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+
+clean:
+	rm -f $(CORE_OBJ) $(HEADLESS_OBJ) $(SDL_OBJ) $(SDL3_OBJ) bdm_headless bdm_sdl bdm_sdl3

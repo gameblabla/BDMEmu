@@ -1,0 +1,51 @@
+:root { color-scheme: dark; --panel:#15181d; --panel2:#20252b; --text:#f2f5f8; --muted:#9ca8b5; --accent:#7ac7ff; --bad:#ff7575; --ok:#8ee59c; }
+* { box-sizing: border-box; }
+body { margin:0; overscroll-behavior:none; font-family: system-ui, -apple-system, Segoe UI, sans-serif; background:#06080a; color:var(--text); overflow:hidden; }
+.app { display:grid; grid-template-columns: 1fr min(380px, 38vw); width:100vw; height:100vh; }
+.stage { min-width:0; min-height:0; display:flex; align-items:center; justify-content:center; background:radial-gradient(circle at center,#1d232a,#050607 70%); }
+.screen-frame { position:relative; width:100%; height:100%; display:flex; align-items:center; justify-content:center; outline:none; touch-action:none; user-select:none; }
+canvas { image-rendering: pixelated; cursor: crosshair; background:#c6d1bd; box-shadow:0 0 0 1px #000, 0 18px 60px rgba(0,0,0,.55); touch-action:none; }
+body.smooth canvas { image-rendering:auto; }
+.overlay-actions { position:absolute; top:12px; right:12px; display:flex; gap:8px; }
+.icon-button, button { border:1px solid #3a434c; background:#222831; color:var(--text); border-radius:9px; padding:8px 10px; cursor:pointer; }
+button:hover, .file-button:hover { border-color:var(--accent); }
+.fps { position:absolute; left:12px; top:12px; background:rgba(0,0,0,.55); padding:4px 7px; border-radius:6px; font-size:12px; }
+.hidden { display:none; }
+.side-menu { background:rgba(16,19,23,.98); border-left:1px solid #303740; padding:14px; overflow:auto; }
+.menu-header { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; border-bottom:1px solid #2a3139; padding-bottom:10px; margin-bottom:12px; }
+h1 { margin:0; font-size:22px; } h2 { font-size:15px; margin:0 0 9px; color:var(--accent); } p { margin:.35rem 0; }
+section { background:var(--panel); border:1px solid #2b323a; border-radius:12px; padding:12px; margin-bottom:12px; }
+.hint, .muted { color:var(--muted); font-size:13px; }
+.row { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+.file-button { display:block; text-align:center; border:1px dashed #4b5661; border-radius:10px; background:var(--panel2); color:var(--text); padding:10px; cursor:pointer; margin:8px 0; }
+.file-button.small { padding:8px; font-size:13px; }
+.file-button input { display:none; }
+label { display:block; margin:8px 0; color:var(--muted); font-size:13px; }
+select, input[type="number"] { width:100%; margin-top:4px; background:#0f1216; color:var(--text); border:1px solid #38414b; border-radius:8px; padding:8px; }
+.check-row { display:flex; align-items:center; gap:8px; color:var(--text); }
+.check-row input { width:auto; }
+.runtime-grid { display:grid; grid-template-columns:auto 1fr; gap:6px 12px; margin:0; font-size:13px; }
+.runtime-grid dt { color:var(--muted); } .runtime-grid dd { margin:0; }
+.control-map { display:grid; gap:6px; }
+.map-row { display:grid; grid-template-columns: 1fr auto; gap:8px; align-items:center; padding:7px 8px; background:var(--panel2); border:1px solid #303842; border-radius:8px; cursor:pointer; }
+.map-row.remapping { border-color:var(--accent); color:var(--accent); }
+.status-ok { color:var(--ok); } .status-bad { color:var(--bad); }
+@media (max-width: 780px) { .app { grid-template-columns: 1fr; } .side-menu { position:fixed; inset:0 0 0 auto; width:min(380px,92vw); transform:translateX(100%); transition:.18s transform ease; z-index:5; } body.menu-open .side-menu { transform:none; } }
+body.drag-active .screen-frame::after {
+  content: "Drop ROM/ZIP here";
+  position: absolute;
+  inset: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed var(--accent);
+  border-radius: 18px;
+  background: rgba(10, 16, 22, .72);
+  color: var(--text);
+  font-size: clamp(18px, 3vw, 34px);
+  font-weight: 700;
+  pointer-events: none;
+  z-index: 4;
+}
+canvas, .screen-frame { -webkit-user-select: none; -webkit-touch-callout: none; }
+.file-button { touch-action: manipulation; }

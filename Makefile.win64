@@ -1,0 +1,7 @@
+# Convenience wrapper for the native 64-bit Windows frontend.
+# Cross-build from Linux with MinGW-w64:
+#   make -f Makefile.win64
+.DEFAULT_GOAL := all
+all app sdl clean sdl-clean:
+	$(MAKE) -f src/Makefile.win64 $@
+.PHONY: all app sdl clean sdl-clean

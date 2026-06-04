@@ -1,0 +1,49 @@
+WASM_CC ?= clang
+WASM_LD ?= wasm-ld
+PORT ?= 8008
+OUT_DIR := web
+OUT_WASM := $(OUT_DIR)/bdm_wasm_core.wasm
+BUILD_DIR := build-wasm
+
+WASM_CFLAGS := --target=wasm32-unknown-unknown -O2 -g0 -std=c11 -DBDM_WASM=1 -D__STDC_HOSTED__=0 \
+  -Iwasm/libc/include -Iinclude -Isrc/core -Wall -Wextra -Wno-unused-parameter -Wno-builtin-macro-redefined
+WASM_LDFLAGS := --no-entry --export-memory --initial-memory=16777216 --max-memory=134217728 --allow-undefined
+WASM_EXPORTS := \
+  --export=bdm_wasm_version --export=bdm_wasm_malloc --export=bdm_wasm_heap_used --export=bdm_wasm_reset_heap --export=bdm_wasm_init \
+  --export=bdm_wasm_load_cart --export=bdm_wasm_load_media --export=bdm_wasm_start --export=bdm_wasm_soft_reset \
+  --export=bdm_wasm_frame --export=bdm_wasm_set_input --export=bdm_wasm_get_status --export=bdm_wasm_get_error \
+  --export=bdm_wasm_get_frame_count --export=bdm_wasm_get_width --export=bdm_wasm_get_height --export=bdm_wasm_get_pitch_pixels \
+  --export=bdm_wasm_get_pixel_format --export=bdm_wasm_get_bytes_per_pixel --export=bdm_wasm_get_framebuffer \
+  --export=bdm_wasm_get_audio_rate --export=bdm_wasm_get_audio_ptr --export=bdm_wasm_get_audio_frames --export=bdm_wasm_audio_consume \
+  --export=bdm_wasm_save_state --export=bdm_wasm_get_save_ptr --export=bdm_wasm_get_save_size --export=bdm_wasm_load_state
+
+CORE_SRCS := \
+  src/core/h8.c \
+  src/core/bdm_core.c \
+  src/video/bdm_video.c \
+  src/input/bdm_input.c \
+  src/sound/bdm_sound.c \
+  wasm/libc/src/pcfx_wasm_libc.c \
+  wasm/bdm_wasm_core.c
+OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(CORE_SRCS))
+
+.PHONY: all build clean serve
+all: build
+build: $(OUT_WASM)
+
+$(OUT_WASM): $(OBJS) | $(OUT_DIR)
+	$(WASM_LD) $(WASM_LDFLAGS) $(WASM_EXPORTS) -o $@ $(OBJS)
+
+$(BUILD_DIR)/%.o: %.c
+	@mkdir -p $(dir $@)
+	$(WASM_CC) $(WASM_CFLAGS) -c $< -o $@
+
+$(OUT_DIR):
+	mkdir -p $(OUT_DIR)
+
+serve: build
+	@echo "Serving $(OUT_DIR) at http://127.0.0.1:$(PORT)/"
+	python3 -m http.server $(PORT) --directory $(OUT_DIR)
+
+clean:
+	rm -rf $(BUILD_DIR) $(OUT_WASM)

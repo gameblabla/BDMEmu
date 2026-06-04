@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Bandai Design Master Emulator
+Comment=Bandai Design Master / Denshi Mangajuku emulator
+Exec=BDMEmu %f
+Icon=bdmemu
+Terminal=false
+Categories=Game;Emulator;
+MimeType=application/octet-stream;

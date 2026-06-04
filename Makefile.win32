@@ -1,0 +1,7 @@
+# Convenience wrapper for the native 32-bit Windows frontend.
+# Cross-build from Linux with MinGW-w64:
+#   make -f Makefile.win32
+.DEFAULT_GOAL := all
+all app clean:
+	$(MAKE) -f src/Makefile.win32 $@
+.PHONY: all app clean

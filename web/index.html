@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>Bandai Design Master WASM</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <main class="stage">
+      <div id="screenFrame" class="screen-frame" tabindex="0" aria-label="Bandai Design Master screen">
+        <canvas id="video" width="160" height="120"></canvas>
+        <div id="overlayActions" class="overlay-actions">
+          <button id="menuToggle" class="icon-button" type="button" title="Menu">☰</button>
+          <button id="fullscreenToggle" class="icon-button" type="button" title="Fullscreen">⛶</button>
+        </div>
+        <div id="fpsCounter" class="fps hidden">0 FPS</div>
+      </div>
+    </main>
+
+    <aside id="sideMenu" class="side-menu">
+      <header class="menu-header">
+        <div><h1>BDMemu</h1><p>Bandai Design Master, C11/WASM</p></div>
+        <button id="closeMenu" class="icon-button" type="button">×</button>
+      </header>
+
+      <section>
+        <h2>Load game</h2>
+        <p class="hint">Select a G cart alone, or select a G cart plus its M media cart. ZIP files containing .bin entries are accepted in the combined loader.</p>
+        <label class="file-button">Load combined / ZIP / reset<input id="gameFiles" type="file" multiple accept=".bin,.rom,.zip,application/zip,application/octet-stream"></label>
+        <label class="file-button small">G cart<input id="cartFile" type="file" accept=".bin,.rom,application/octet-stream"></label>
+        <label class="file-button small">M media cart optional<input id="mediaFile" type="file" accept=".bin,.rom,application/octet-stream"></label>
+        <button id="loadPairButton" type="button">Load selected carts / reset</button>
+        <div id="mediaName" class="muted">no game loaded</div>
+        <div class="row"><button id="softResetButton" type="button">Soft reset</button><button id="pauseToggle" type="button">Pause</button></div>
+      </section>
+
+      <section>
+        <h2>Video</h2>
+        <label>Scale mode
+          <select id="scaleMode"><option value="integer">Integer scaling</option><option value="aspect">Keep aspect ratio</option><option value="stretch">Stretch</option></select>
+        </label>
+        <label class="check-row"><input id="smoothUpscale" type="checkbox"> Browser smoothing</label>
+        <label class="check-row"><input id="showFps" type="checkbox"> Show FPS</label>
+      </section>
+
+      <section>
+        <h2>Audio</h2>
+        <label class="check-row"><input id="audioEnabled" type="checkbox"> Enable audio</label>
+        <label>Sample rate <input id="sampleRate" type="number" min="8000" max="192000" step="1000"></label>
+      </section>
+
+      <section>
+        <h2>Save states</h2>
+        <label>Slot <select id="stateSlot"></select></label>
+        <div class="row"><button id="saveState" type="button">Save</button><button id="loadState" type="button">Load</button><button id="exportState" type="button">Export</button></div>
+        <label class="file-button small">Import state<input id="importStateFile" type="file" accept=".bdmst,application/octet-stream"></label>
+      </section>
+
+      <section>
+        <h2>Controls</h2>
+        <div id="controlMap" class="control-map"></div>
+        <label class="check-row"><input id="autoCalibration" type="checkbox"> Auto calibration assist</label>
+        <label>Minimum touch hold (ms) <input id="touchHoldMs" type="number" min="0" max="5000" step="10"></label>
+        <label>Calibration touch hold (ms) <input id="calibrationTouchHoldMs" type="number" min="0" max="5000" step="10"></label>
+        <label>Post-calibration touch X correction <input id="touchOffsetX" type="number" min="-8" max="8" step="1"></label>
+        <label>Post-calibration touch Y correction <input id="touchOffsetY" type="number" min="-8" max="8" step="1"></label>
+        <p class="hint">Click a mapping row, then press the new key. Touch and mouse on the LCD act as the stylus; there is no pointer lock or mouse grab. Brief taps are latched briefly for the emulated ADC; default is 20 ms, with a longer 500 ms latch while a firmware calibration cross is visible so manual calibration clicks are sampled. Touch correction is applied only after calibration, not while the firmware calibration target is visible. Auto calibration assist fast-forwards the initial panel-calibration taps so you do not have to recalibrate your host touchscreen/mouse for every boot.</p>
+      </section>
+
+      <section>
+        <h2>Status</h2>
+        <dl class="runtime-grid"><dt>Status</dt><dd id="runtimeStatus">loading</dd><dt>Resolution</dt><dd id="runtimeResolution">160×120</dd><dt>Frame</dt><dd id="runtimeFrame">0</dd><dt>Storage</dt><dd id="storageStatus">ready</dd></dl>
+      </section>
+    </aside>
+  </div>
+  <script type="module" src="bdm-wasm.js"></script>
+</body>
+</html>

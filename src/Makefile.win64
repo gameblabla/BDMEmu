@@ -1,0 +1,89 @@
+# Native 64-bit Windows frontend build for Bandai Design Master.
+# Win64 uses SDL3 for gamepad/input only, WASAPI with waveOut fallback for audio,
+# and selectable D3D11-shader/GDI video endpoints. SDL3 is built from source first.
+
+THIS_MAKEFILE := $(lastword $(MAKEFILE_LIST))
+ROOT := $(abspath $(dir $(THIS_MAKEFILE))/..)
+
+ifeq ($(origin CC),default)
+CC := x86_64-w64-mingw32-gcc
+endif
+ifeq ($(origin CXX),default)
+CXX := x86_64-w64-mingw32-g++
+endif
+ifeq ($(origin RC),default)
+RC := x86_64-w64-mingw32-windres
+endif
+
+PKG_CONFIG ?= pkg-config
+TARGET = $(ROOT)/bdm-win64.exe
+BUILD = $(ROOT)/build/win64
+SDL_PREFIX = $(ROOT)/third_party/sdl/install/win64
+SDL_PC = $(SDL_PREFIX)/lib/pkgconfig
+SDL_CFLAGS_PKG := $(shell PKG_CONFIG_LIBDIR="$(SDL_PC)" PKG_CONFIG_PATH= $(PKG_CONFIG) --cflags sdl3 2>/dev/null)
+SDL_LIBS_PKG := $(shell PKG_CONFIG_LIBDIR="$(SDL_PC)" PKG_CONFIG_PATH= $(PKG_CONFIG) --libs --static sdl3 2>/dev/null)
+SDL_CFLAGS = -I$(SDL_PREFIX)/include $(SDL_CFLAGS_PKG)
+ifeq ($(strip $(SDL_LIBS_PKG)),)
+SDL_LIBS = -L$(SDL_PREFIX)/lib -lSDL3 -lm -lkernel32 -luser32 -lgdi32 -lwinmm -limm32 -lole32 -loleaut32 -lversion -luuid -ladvapi32 -lsetupapi -lshell32 -lhid -ldinput8 -ldxguid -lcfgmgr32
+else
+SDL_LIBS = -L$(SDL_PREFIX)/lib $(SDL_LIBS_PKG)
+endif
+
+DEFS = -DWIN32_LEAN_AND_MEAN -DNOMINMAX -D_CRT_SECURE_NO_WARNINGS -D_WIN32_WINNT=0x0601 -DBDM_WIN64_FRONTEND
+INCLUDES = -I$(ROOT)/include -I$(ROOT)/src/core -I$(ROOT)/src/win32
+CFLAGS ?= -std=c11 -O2 -Wall -Wextra -Wno-unused-parameter $(DEFS) $(INCLUDES) $(SDL_CFLAGS)
+LDFLAGS ?= -static -static-libgcc -mwindows
+LDLIBS = $(SDL_LIBS) -ld3d11 -ldxgi -ldxguid -lgdi32 -lwinmm -lole32 -loleaut32 -luuid -lavrt -lksuser -lcomctl32 -lcomdlg32 -lshell32 -luser32 -ladvapi32 -lbcrypt -lws2_32 -lm
+
+CORE_SRC = \
+  $(ROOT)/src/core/h8.c \
+  $(ROOT)/src/core/bdm_core.c \
+  $(ROOT)/src/video/bdm_video.c \
+  $(ROOT)/src/input/bdm_input.c \
+  $(ROOT)/src/sound/bdm_sound.c \
+  $(ROOT)/src/frontend/bdm_frontend.c
+WIN_SRC = \
+  $(ROOT)/src/win32/bdm_win32_main.c \
+  $(ROOT)/src/win32/bdm_win32_audio.c \
+  $(ROOT)/src/win32/bdm_win32_video.c \
+  $(ROOT)/src/win32/bdm_win32_sdl_input.c
+SRC = $(CORE_SRC) $(WIN_SRC)
+OBJ = $(patsubst $(ROOT)/%.c,$(BUILD)/%.o,$(SRC))
+
+all: app
+
+check-toolchain:
+	@command -v $(CC) >/dev/null 2>&1 || { \
+		echo "missing MinGW-w64 64-bit C compiler: $(CC)" >&2; \
+		echo "Install the x86_64 MinGW-w64 toolchain or run: make -f Makefile.win64 CC=/path/to/x86_64-w64-mingw32-gcc" >&2; \
+		exit 1; \
+	}
+	@command -v $(CXX) >/dev/null 2>&1 || { \
+		echo "missing MinGW-w64 64-bit C++ compiler: $(CXX)" >&2; \
+		echo "SDL3's CMake build requires the matching MinGW-w64 C++ compiler." >&2; \
+		exit 1; \
+	}
+
+sdl: check-toolchain
+	CC="$(CC)" CXX="$(CXX)" RC="$(RC)" $(ROOT)/scripts/build_sdl3_mingw.sh win64
+
+app: $(TARGET)
+
+check-sdl: sdl
+	@test -f "$(SDL_PREFIX)/include/SDL3/SDL.h" || { echo "SDL3 headers missing; run make -f Makefile.win64 sdl"; exit 1; }
+	@test -f "$(SDL_PREFIX)/lib/libSDL3.a" || { echo "SDL3 static library missing; run make -f Makefile.win64 sdl"; exit 1; }
+
+$(TARGET): $(OBJ) | check-sdl
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LDLIBS)
+
+$(BUILD)/%.o: $(ROOT)/%.c | check-sdl
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+clean:
+	rm -rf $(BUILD) $(TARGET)
+
+sdl-clean:
+	rm -rf $(ROOT)/third_party/sdl/build/win64 $(ROOT)/third_party/sdl/install/win64
+
+.PHONY: all sdl app check-toolchain check-sdl clean sdl-clean

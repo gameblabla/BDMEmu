@@ -1,0 +1,55 @@
+# Native 32-bit Windows frontend build for Bandai Design Master.
+# Win32 intentionally avoids SDL and NT-era dependencies: GDI video, waveOut audio, WinMM gamepads, window-message keyboard/mouse.
+# This target is kept in a Windows 95-class API/import profile.
+
+THIS_MAKEFILE := $(lastword $(MAKEFILE_LIST))
+ROOT := $(abspath $(dir $(THIS_MAKEFILE))/..)
+
+ifeq ($(origin CC),default)
+CC := i686-w64-mingw32-gcc
+endif
+
+TARGET = $(ROOT)/bdm-win32.exe
+BUILD = $(ROOT)/build/win32
+DEFS = -DWIN32_LEAN_AND_MEAN -DNOMINMAX -D_CRT_SECURE_NO_WARNINGS -DWINVER=0x0400 -D_WIN32_WINDOWS=0x0400 -DBDM_WIN32_WIN95 -DBDM_WIN32_GDI_ONLY
+INCLUDES = -I$(ROOT)/include -I$(ROOT)/src/core -I$(ROOT)/src/win32
+CFLAGS ?= -std=c11 -O2 -Wall -Wextra -Wno-unused-parameter $(DEFS) $(INCLUDES)
+LDFLAGS ?= -static -static-libgcc -mwindows -Wl,--subsystem,windows:4.0
+LDLIBS = -lcomdlg32 -luser32 -lgdi32 -lwinmm -lm
+
+CORE_SRC = \
+  $(ROOT)/src/core/h8.c \
+  $(ROOT)/src/core/bdm_core.c \
+  $(ROOT)/src/video/bdm_video.c \
+  $(ROOT)/src/input/bdm_input.c \
+  $(ROOT)/src/sound/bdm_sound.c \
+  $(ROOT)/src/frontend/bdm_frontend.c
+WIN_SRC = \
+  $(ROOT)/src/win32/bdm_win32_main.c \
+  $(ROOT)/src/win32/bdm_win32_audio.c \
+  $(ROOT)/src/win32/bdm_win32_video.c \
+  $(ROOT)/src/win32/bdm_win32_sdl_input.c
+SRC = $(CORE_SRC) $(WIN_SRC)
+OBJ = $(patsubst $(ROOT)/%.c,$(BUILD)/%.o,$(SRC))
+
+all: app
+app: $(TARGET)
+
+check-toolchain:
+	@command -v $(CC) >/dev/null 2>&1 || { \
+		echo "missing MinGW-w64 32-bit C compiler: $(CC)" >&2; \
+		echo "Install the i686 MinGW-w64 toolchain or run: make -f Makefile.win32 CC=/path/to/i686-w64-mingw32-gcc" >&2; \
+		exit 1; \
+	}
+
+$(TARGET): $(OBJ) | check-toolchain
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LDLIBS)
+
+$(BUILD)/%.o: $(ROOT)/%.c | check-toolchain
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+clean:
+	rm -rf $(BUILD) $(TARGET)
+
+.PHONY: all app check-toolchain clean
