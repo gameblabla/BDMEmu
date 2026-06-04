@@ -38,7 +38,7 @@ public slots:
     void penDown(float x, float y);
     void penMove(float x, float y);
     void penUp(float x, float y);
-    void setButton(int button, bool down);
+    void setPanelButton(int button, bool down);
     bool saveState(const QString &path);
     bool loadState(const QString &path);
 

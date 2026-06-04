@@ -608,7 +608,7 @@ uint16_t bdm_core_bus_read16(const bdm_core_t *core, uint16_t address) {
 
 /* Whole-machine save states.  ROM bytes are deliberately not embedded; the same
    BIOS/cart/media images should be loaded before calling load_state. */
-#define BDM_STATE_VERSION 2u
+#define BDM_STATE_VERSION 3u
 
 static void st_w8(uint8_t **p, uint8_t v) { *(*p)++ = v; }
 static void st_w16(uint8_t **p, uint16_t v) { uint8_t *q = *p; q[0] = (uint8_t)v; q[1] = (uint8_t)(v >> 8); *p = q + 2; }
@@ -779,8 +779,7 @@ bdm_status_t bdm_core_load_state(bdm_core_t *core, const void *data, size_t size
     if (!st_r32(&p, end, &sound_sz) || !st_need(p, end, sound_sz) || bdm_sound_load_state(core->sound, p, sound_sz) != 0) return BDM_ERR_BAD_ROM;
     p += sound_sz;
 
-    /* Keep hardware shadow registers and VRAM-derived display coherent even if
-       a future state was produced by an older frontend that ignored a subchunk. */
+    /* Keep hardware shadow registers and VRAM-derived display coherent after restore. */
     word_to_io(core, 0xff92u, core->timer16_tcnt);
     word_to_io(core, 0xff94u, core->timer16_ocra);
     core->io[0xff90u - BDM_IO_BASE] = core->timer16_tier;

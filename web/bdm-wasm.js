@@ -2,6 +2,7 @@ const DEFAULT_CONFIG = {
   scaleMode: 'integer',
   smoothUpscale: false,
   showFps: false,
+  visibleHardwareButtons: false,
   audioEnabled: true,
   sampleRate: 44100,
   stepsPerSecond: 2000000,
@@ -14,15 +15,20 @@ const DEFAULT_CONFIG = {
   autoCalibration: true,
   stateSlot: 0,
   keys: {
-    A: 'KeyZ', B: 'KeyX', Start: 'Enter', Select: 'ShiftRight',
+    MenuA: 'KeyA', MenuB: 'KeyB', MenuC: 'KeyC', MenuD: 'KeyD', MenuE: 'KeyE',
+    MenuAAlias: 'KeyZ', MenuBAlias: 'KeyX', PageLeft: 'ArrowLeft', PageRight: 'ArrowRight',
     Reset: 'KeyR', SaveState: 'F5', LoadState: 'F8', Fullscreen: 'F11', ScaleMode: 'F9', Menu: 'F1'
   }
 };
-const BUTTON_BITS = { A: 1, B: 2, Start: 4, Select: 8 };
+const BUTTON_BITS = {};
+const PANEL_BUTTON_POINTS = {
+  MenuA: { x: 16, y: 4 }, MenuB: { x: 48, y: 4 }, MenuC: { x: 80, y: 4 }, MenuD: { x: 112, y: 4 }, MenuE: { x: 144, y: 4 },
+  MenuAAlias: { x: 16, y: 4 }, MenuBAlias: { x: 48, y: 4 }, PageLeft: { x: 3, y: 60 }, PageRight: { x: 156, y: 60 }
+};
 const STATUS_TEXT = { 0: 'empty', 1: 'ready', 3: 'running', 5: 'error' };
 const FRAME_RATE = 60;
 const STORE_KEY = 'bdm-wasm-config-v1';
-const WASM_BUILD_ID = 'bdm-wasm-20260604-manual-cal-hold';
+const WASM_BUILD_ID = 'bdm-wasm-20260604-visible-panel-buttons';
 const ROM_MAX_BYTES = 128 * 1024;
 
 let config = loadConfig();
@@ -77,6 +83,8 @@ const els = {
   smoothUpscale: document.getElementById('smoothUpscale'),
   showFps: document.getElementById('showFps'),
   fpsCounter: document.getElementById('fpsCounter'),
+  hardwarePanel: document.getElementById('hardwarePanel'),
+  visibleHardwareButtons: document.getElementById('visibleHardwareButtons'),
   audioEnabled: document.getElementById('audioEnabled'),
   sampleRate: document.getElementById('sampleRate'),
   stateSlot: document.getElementById('stateSlot'),
@@ -109,6 +117,7 @@ function loadConfig() {
       calibrationTouchHoldMs: clampNumber(saved.calibrationTouchHoldMs, 0, 5000, DEFAULT_CONFIG.calibrationTouchHoldMs),
       touchOffsetX: clampNumber(saved.touchOffsetX, -8, 8, DEFAULT_CONFIG.touchOffsetX),
       touchOffsetY: clampNumber(saved.touchOffsetY, -8, 8, DEFAULT_CONFIG.touchOffsetY),
+      visibleHardwareButtons: !!saved.visibleHardwareButtons,
       touchBurstFrames: clampNumber(saved.touchBurstFrames, 1, 10, DEFAULT_CONFIG.touchBurstFrames),
       startupFrames: clampNumber(saved.startupFrames, 0, 120, DEFAULT_CONFIG.startupFrames),
       autoCalibration: saved.autoCalibration !== false,
@@ -452,8 +461,27 @@ function buttonsMask() {
 function effectivePenDown(now = performance.now()) {
   return !!pen.physicalDown || now < pen.holdUntil || pen.latchedFrames > 0;
 }
+function activePanelPoint() {
+  for (const [name, pt] of Object.entries(PANEL_BUTTON_POINTS)) if (pressed.has(`Panel:${name}`)) return pt;
+  for (const [name, pt] of Object.entries(PANEL_BUTTON_POINTS)) {
+    const code = config.keys[name];
+    if (code && pressed.has(code)) return pt;
+  }
+  if (pressed.has('BracketLeft')) return PANEL_BUTTON_POINTS.PageLeft;
+  if (pressed.has('BracketRight')) return PANEL_BUTTON_POINTS.PageRight;
+  if (pressed.has('Backspace')) return PANEL_BUTTON_POINTS.PageLeft;
+  if (pressed.has('Enter')) return PANEL_BUTTON_POINTS.PageRight;
+  return null;
+}
+function currentInput(now = performance.now()) {
+  if (effectivePenDown(now)) return { x: pen.x | 0, y: pen.y | 0, down: 1 };
+  const panel = activePanelPoint();
+  if (panel) return { x: panel.x | 0, y: panel.y | 0, down: 1 };
+  return { x: pen.x | 0, y: pen.y | 0, down: 0 };
+}
 function sendInput(now = performance.now()) {
-  if (wasm?.bdm_wasm_set_input) wasm.bdm_wasm_set_input(buttonsMask(), pen.x | 0, pen.y | 0, effectivePenDown(now) ? 1 : 0);
+  const inp = currentInput(now);
+  if (wasm?.bdm_wasm_set_input) wasm.bdm_wasm_set_input(0, inp.x, inp.y, inp.down);
 }
 function resetAutoCalibration(start = false) {
   autoCal = { active: !!start && !!config.autoCalibration, stage: start && config.autoCalibration ? 'search' : 'idle', frame: 0, done: false, taps: 0 };
@@ -518,7 +546,7 @@ function detectCalibrationTarget() {
 }
 function runFrameWithInput(x, y, down) {
   if (!wasm || wasm.bdm_wasm_get_status?.() !== 3) return false;
-  const ok = wasm.bdm_wasm_frame(frameSteps(), buttonsMask(), x | 0, y | 0, down ? 1 : 0);
+  const ok = wasm.bdm_wasm_frame(frameSteps(), 0, x | 0, y | 0, down ? 1 : 0);
   pullAudio();
   return !!ok;
 }
@@ -692,7 +720,7 @@ function runStartupFrames(count) {
   const n = Math.max(0, Math.min(120, count | 0));
   const steps = Math.max(1, Math.round(config.stepsPerSecond / FRAME_RATE));
   for (let i = 0; i < n; ++i) {
-    wasm.bdm_wasm_frame(steps, buttonsMask(), pen.x | 0, pen.y | 0, effectivePenDown() ? 1 : 0);
+    { const inp = currentInput(); wasm.bdm_wasm_frame(steps, 0, inp.x, inp.y, inp.down); }
     if (!pen.physicalDown && pen.latchedFrames > 0) --pen.latchedFrames;
     pullAudio();
   }
@@ -756,7 +784,7 @@ function tick(now) {
     let ran = 0;
     while (limiterAcc >= interval && ran < 4) {
       if (maybeRealtimeAutoCalibration()) { limiterAcc -= interval; ran++; continue; }
-      wasm.bdm_wasm_frame(frameSteps(), buttonsMask(), pen.x | 0, pen.y | 0, effectivePenDown(now) ? 1 : 0);
+      { const inp = currentInput(now); wasm.bdm_wasm_frame(frameSteps(), 0, inp.x, inp.y, inp.down); }
       if (!pen.physicalDown && pen.latchedFrames > 0) --pen.latchedFrames;
       pullAudio();
       limiterAcc -= interval;
@@ -809,7 +837,7 @@ function cycleScaleMode() { config.scaleMode = config.scaleMode === 'integer' ? 
 function toggleMenu() { document.body.classList.toggle('menu-open'); }
 function rebuildControlMap() {
   els.controlMap.innerHTML = '';
-  for (const name of ['A','B','Start','Select','Reset','SaveState','LoadState','Fullscreen','ScaleMode','Menu']) {
+  for (const name of ['MenuA','MenuB','MenuC','MenuD','MenuE','MenuAAlias','MenuBAlias','PageLeft','PageRight','Reset','SaveState','LoadState','Fullscreen','ScaleMode','Menu']) {
     const row = document.createElement('button');
     row.type = 'button'; row.className = 'map-row';
     row.innerHTML = `<span>${name}</span><code>${config.keys[name]}</code>`;
@@ -821,6 +849,8 @@ function syncControls() {
   els.scaleMode.value = config.scaleMode;
   els.smoothUpscale.checked = !!config.smoothUpscale;
   els.showFps.checked = !!config.showFps;
+  if (els.visibleHardwareButtons) els.visibleHardwareButtons.checked = !!config.visibleHardwareButtons;
+  document.body.classList.toggle('show-hardware-panel', !!config.visibleHardwareButtons);
   els.audioEnabled.checked = !!config.audioEnabled;
   els.sampleRate.value = String(config.sampleRate);
   if (els.touchHoldMs) els.touchHoldMs.value = String(config.touchHoldMs);
@@ -854,11 +884,12 @@ function initUi() {
   els.loadState.onclick = loadStateFromLocalStorage;
   els.exportState.onclick = exportState;
   els.importStateFile.onchange = e => importState(e.target.files?.[0]);
-  for (const el of [els.scaleMode, els.smoothUpscale, els.showFps, els.audioEnabled, els.sampleRate, els.touchHoldMs, els.calibrationTouchHoldMs, els.touchOffsetX, els.touchOffsetY, els.autoCalibration, els.stateSlot].filter(Boolean)) {
+  for (const el of [els.scaleMode, els.smoothUpscale, els.showFps, els.visibleHardwareButtons, els.audioEnabled, els.sampleRate, els.touchHoldMs, els.calibrationTouchHoldMs, els.touchOffsetX, els.touchOffsetY, els.autoCalibration, els.stateSlot].filter(Boolean)) {
     el.onchange = async () => {
       config.scaleMode = els.scaleMode.value;
       config.smoothUpscale = els.smoothUpscale.checked;
       config.showFps = els.showFps.checked;
+      config.visibleHardwareButtons = els.visibleHardwareButtons ? !!els.visibleHardwareButtons.checked : !!config.visibleHardwareButtons;
       config.audioEnabled = els.audioEnabled.checked;
       config.sampleRate = clampNumber(els.sampleRate.value, 8000, 192000, 44100);
       config.touchHoldMs = clampNumber(els.touchHoldMs ? els.touchHoldMs.value : config.touchHoldMs, 0, 5000, DEFAULT_CONFIG.touchHoldMs);
@@ -871,6 +902,22 @@ function initUi() {
       saveConfig(); syncControls(); renderOnce();
       if (config.audioEnabled) await startAudio(); else clearAudioQueue();
     };
+  }
+  if (els.hardwarePanel) {
+    for (const b of els.hardwarePanel.querySelectorAll('[data-panel]')) {
+      const name = b.getAttribute('data-panel');
+      const set = down => {
+        if (!PANEL_BUTTON_POINTS[name]) return;
+        if (down) pressed.add(`Panel:${name}`); else pressed.delete(`Panel:${name}`);
+        sendInput();
+      };
+      b.addEventListener('pointerdown', e => { els.screenFrame.focus(); b.setPointerCapture?.(e.pointerId); set(true); e.preventDefault(); });
+      b.addEventListener('pointerup', e => { set(false); try { b.releasePointerCapture?.(e.pointerId); } catch (_) {} e.preventDefault(); });
+      b.addEventListener('pointercancel', e => { set(false); e.preventDefault(); });
+      b.addEventListener('pointerleave', e => { if (e.buttons === 0) set(false); });
+      b.addEventListener('keydown', e => { if (e.code === 'Space' || e.code === 'Enter') { set(true); e.preventDefault(); } });
+      b.addEventListener('keyup', e => { if (e.code === 'Space' || e.code === 'Enter') { set(false); e.preventDefault(); } });
+    }
   }
   window.addEventListener('resize', () => renderOnce());
   window.addEventListener('keydown', e => {

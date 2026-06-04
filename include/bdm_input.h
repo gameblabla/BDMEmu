@@ -13,10 +13,13 @@ typedef struct bdm_input bdm_input_t;
 
 typedef enum bdm_button {
     BDM_BUTTON_PEN = 0,
-    BDM_BUTTON_A,
-    BDM_BUTTON_B,
-    BDM_BUTTON_START,
-    BDM_BUTTON_SELECT,
+    BDM_BUTTON_MENU_A,
+    BDM_BUTTON_MENU_B,
+    BDM_BUTTON_MENU_C,
+    BDM_BUTTON_MENU_D,
+    BDM_BUTTON_MENU_E,
+    BDM_BUTTON_PAGE_LEFT,
+    BDM_BUTTON_PAGE_RIGHT,
     BDM_BUTTON_COUNT
 } bdm_button_t;
 

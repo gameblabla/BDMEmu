@@ -11,6 +11,17 @@
     <main class="stage">
       <div id="screenFrame" class="screen-frame" tabindex="0" aria-label="Bandai Design Master screen">
         <canvas id="video" width="160" height="120"></canvas>
+        <div id="hardwarePanel" class="hardware-panel" aria-label="Hardware panel buttons">
+          <div class="hardware-panel-top">
+            <button type="button" data-panel="MenuA">A</button>
+            <button type="button" data-panel="MenuB">B</button>
+            <button type="button" data-panel="MenuC">C</button>
+            <button type="button" data-panel="MenuD">D</button>
+            <button type="button" data-panel="MenuE">E</button>
+          </div>
+          <button class="hardware-panel-side hardware-panel-left" type="button" data-panel="PageLeft">‹</button>
+          <button class="hardware-panel-side hardware-panel-right" type="button" data-panel="PageRight">›</button>
+        </div>
         <div id="overlayActions" class="overlay-actions">
           <button id="menuToggle" class="icon-button" type="button" title="Menu">☰</button>
           <button id="fullscreenToggle" class="icon-button" type="button" title="Fullscreen">⛶</button>
@@ -43,6 +54,7 @@
         </label>
         <label class="check-row"><input id="smoothUpscale" type="checkbox"> Browser smoothing</label>
         <label class="check-row"><input id="showFps" type="checkbox"> Show FPS</label>
+        <label class="check-row"><input id="visibleHardwareButtons" type="checkbox"> Show hardware A-E / page buttons</label>
       </section>
 
       <section>

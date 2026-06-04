@@ -186,10 +186,13 @@ static int parse_script_drag_arg(const char *s, scripted_drag_event_t *drag) {
 static int parse_button(const char *s, bdm_button_t *out) {
     if (!s || !out) return 0;
     if (!strcmp(s, "pen")) *out = BDM_BUTTON_PEN;
-    else if (!strcmp(s, "a")) *out = BDM_BUTTON_A;
-    else if (!strcmp(s, "b")) *out = BDM_BUTTON_B;
-    else if (!strcmp(s, "start")) *out = BDM_BUTTON_START;
-    else if (!strcmp(s, "select")) *out = BDM_BUTTON_SELECT;
+    else if (!strcmp(s, "a") || !strcmp(s, "menu-a")) *out = BDM_BUTTON_MENU_A;
+    else if (!strcmp(s, "b") || !strcmp(s, "menu-b")) *out = BDM_BUTTON_MENU_B;
+    else if (!strcmp(s, "c") || !strcmp(s, "menu-c")) *out = BDM_BUTTON_MENU_C;
+    else if (!strcmp(s, "d") || !strcmp(s, "menu-d")) *out = BDM_BUTTON_MENU_D;
+    else if (!strcmp(s, "e") || !strcmp(s, "menu-e")) *out = BDM_BUTTON_MENU_E;
+    else if (!strcmp(s, "left") || !strcmp(s, "page-left")) *out = BDM_BUTTON_PAGE_LEFT;
+    else if (!strcmp(s, "right") || !strcmp(s, "page-right")) *out = BDM_BUTTON_PAGE_RIGHT;
     else return 0;
     return 1;
 }
@@ -408,7 +411,7 @@ int main(int argc, char **argv) {
     int pen_x = 0;
     int pen_y = 0;
     int pen_down = 0;
-    bool pressed[BDM_BUTTON_COUNT] = { false, false, false, false, false };
+    bool pressed[BDM_BUTTON_COUNT] = { false };
     scripted_tap_event_t post_auto_taps[64];
     scripted_drag_event_t post_auto_drags[64];
     size_t post_auto_tap_count = 0;

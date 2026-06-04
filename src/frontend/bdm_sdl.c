@@ -113,9 +113,8 @@ static void usage(const char *argv0) {
         "SDL input:\n"
         "  Mouse/touch: left mouse button on the LCD area. A click is held for\n"
         "               --touch-hold-ms for ADC sampling; default is 20 ms.\n"
-        "  A/B:         Z / X\n"
-        "  Start:       Return\n"
-        "  Select:      Right Shift or Backspace\n"
+        "  Menu A-E:    A/B/C/D/E (Z/X also alias A/B)\n"
+        "  Page L/R:    Left/Right arrows, [/] or Backspace/Return\n"
         "  Reset:       R\n"
         "  Save/load:   F5 / F8, using --state or bdm_state.bdmst\n"
         "  Calibration: auto-assisted by default; pass --no-auto-calibrate to do it manually\n"
@@ -555,23 +554,36 @@ static bdm_status_t soft_reset_with_options(bdm_core_t *core, bdm_input_t *input
     return run_auto_sequence(core, input, 1, opt->auto_title, opt->auto_menu, opt->auto_mode1);
 }
 
+static int sdl1_key_to_panel_button(SDLKey sym, bdm_button_t *out) {
+    switch (sym) {
+    case SDLK_a: case SDLK_z: if (out) *out = BDM_BUTTON_MENU_A; return 1;
+    case SDLK_b: case SDLK_x: if (out) *out = BDM_BUTTON_MENU_B; return 1;
+    case SDLK_c: if (out) *out = BDM_BUTTON_MENU_C; return 1;
+    case SDLK_d: if (out) *out = BDM_BUTTON_MENU_D; return 1;
+    case SDLK_e: if (out) *out = BDM_BUTTON_MENU_E; return 1;
+    case SDLK_LEFT: case SDLK_LEFTBRACKET: case SDLK_BACKSPACE: if (out) *out = BDM_BUTTON_PAGE_LEFT; return 1;
+    case SDLK_RIGHT: case SDLK_RIGHTBRACKET: case SDLK_RETURN: if (out) *out = BDM_BUTTON_PAGE_RIGHT; return 1;
+    default: return 0;
+    }
+}
+
+static void sdl1_set_panel_button(bdm_input_t *input, sdl_touch_state_t *touch, bdm_core_t *core, bdm_button_t button, int pressed) {
+    int32_t x_fp = 0, y_fp = 0;
+    if (!input || !touch || !bdm_fe_panel_button_to_pen_fp(button, &x_fp, &y_fp)) return;
+    bdm_input_set_button(input, button, pressed != 0);
+    if (pressed) touch_apply_down_fp(input, touch, core, x_fp, y_fp);
+    else touch_request_up_fp(input, touch, core, x_fp, y_fp);
+}
+
 static void set_key_button(bdm_input_t *input, SDLKey sym, int pressed, int *quit_requested, bdm_core_t *core, sdl_touch_state_t *touch, const sdl_options_t *opt) {
+    bdm_button_t panel_button;
+    if (sdl1_key_to_panel_button(sym, &panel_button)) {
+        sdl1_set_panel_button(input, touch, core, panel_button, pressed);
+        return;
+    }
     switch (sym) {
     case SDLK_ESCAPE:
         if (pressed && quit_requested) *quit_requested = 1;
-        break;
-    case SDLK_z:
-        bdm_input_set_button(input, BDM_BUTTON_A, pressed != 0);
-        break;
-    case SDLK_x:
-        bdm_input_set_button(input, BDM_BUTTON_B, pressed != 0);
-        break;
-    case SDLK_RETURN:
-        bdm_input_set_button(input, BDM_BUTTON_START, pressed != 0);
-        break;
-    case SDLK_RSHIFT:
-    case SDLK_BACKSPACE:
-        bdm_input_set_button(input, BDM_BUTTON_SELECT, pressed != 0);
         break;
     case SDLK_r:
         if (pressed && core) {

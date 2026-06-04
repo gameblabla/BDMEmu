@@ -6,7 +6,15 @@ body { margin:0; overscroll-behavior:none; font-family: system-ui, -apple-system
 .screen-frame { position:relative; width:100%; height:100%; display:flex; align-items:center; justify-content:center; outline:none; touch-action:none; user-select:none; }
 canvas { image-rendering: pixelated; cursor: crosshair; background:#c6d1bd; box-shadow:0 0 0 1px #000, 0 18px 60px rgba(0,0,0,.55); touch-action:none; }
 body.smooth canvas { image-rendering:auto; }
-.overlay-actions { position:absolute; top:12px; right:12px; display:flex; gap:8px; }
+.overlay-actions { position:absolute; top:12px; right:12px; display:flex; gap:8px; z-index:3; }
+.hardware-panel { position:absolute; inset:0; pointer-events:none; z-index:2; display:none; }
+body.show-hardware-panel .hardware-panel { display:block; }
+.hardware-panel button { pointer-events:auto; min-width:38px; min-height:28px; border-radius:8px; font-weight:700; background:rgba(34,40,49,.90); }
+.hardware-panel-top { position:absolute; top:14px; left:50%; transform:translateX(-50%); display:flex; gap:6px; }
+.hardware-panel-side { position:absolute; top:50%; transform:translateY(-50%); min-width:34px; min-height:72px; font-size:22px; }
+.hardware-panel-left { left:14px; }
+.hardware-panel-right { right:14px; }
+
 .icon-button, button { border:1px solid #3a434c; background:#222831; color:var(--text); border-radius:9px; padding:8px 10px; cursor:pointer; }
 button:hover, .file-button:hover { border-color:var(--accent); }
 .fps { position:absolute; left:12px; top:12px; background:rgba(0,0,0,.55); padding:4px 7px; border-radius:6px; font-size:12px; }

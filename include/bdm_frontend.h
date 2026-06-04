@@ -117,6 +117,8 @@ void bdm_fe_touch_update_motion(bdm_input_t *input, bdm_fe_touch_state_t *touch,
 void bdm_fe_touch_update_motion_fp(bdm_input_t *input, bdm_fe_touch_state_t *touch, int32_t x_fp, int32_t y_fp);
 void bdm_fe_touch_tick_release(bdm_input_t *input, bdm_fe_touch_state_t *touch, bdm_core_t *core);
 void bdm_fe_touch_force_clear(bdm_input_t *input, bdm_fe_touch_state_t *touch);
+int bdm_fe_panel_button_to_pen_fp(bdm_button_t button, int32_t *out_x_fp, int32_t *out_y_fp);
+void bdm_fe_set_panel_button(bdm_input_t *input, bdm_fe_touch_state_t *touch, bdm_core_t *core, bdm_button_t button, int pressed);
 void bdm_fe_set_button_key_ascii(bdm_input_t *input, unsigned key, int pressed, int *quit_requested, bdm_core_t *core, bdm_fe_touch_state_t *touch);
 
 #ifdef __cplusplus

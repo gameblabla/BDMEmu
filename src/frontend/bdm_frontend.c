@@ -77,9 +77,8 @@ void bdm_fe_print_usage(FILE *f, const char *argv0, const char *frontend_name, i
     fprintf(f,
         "\n%s input defaults:\n"
         "  Pen:         mouse/touch on the 160x120 LCD; short clicks are held for ADC sampling\n"
-        "  A/B:         Z / X\n"
-        "  Start:       Return\n"
-        "  Select:      Right Shift or Backspace\n"
+        "  Menu A-E:    A/B/C/D/E (Z/X are alternate host keys for A/B)\n"
+        "  Page L/R:    Left/Right, Backspace/Return, or [/]\n"
         "  Reset:       R\n"
         "  Save/load:   F5 / F8, using --state or bdm_state.bdmst\n"
         "  Scaling:     F9 toggles integer scale vs aspect-fit letterbox when supported\n"
@@ -541,24 +540,62 @@ void bdm_fe_touch_force_clear(bdm_input_t *input, bdm_fe_touch_state_t *touch) {
     bdm_input_set_pen_fp(input, touch->x_fp, touch->y_fp, false);
 }
 
+int bdm_fe_panel_button_to_pen_fp(bdm_button_t button, int32_t *out_x_fp, int32_t *out_y_fp) {
+    int x = 0, y = 0;
+    switch (button) {
+    case BDM_BUTTON_MENU_A: x = 16;  y = 4;  break;
+    case BDM_BUTTON_MENU_B: x = 48;  y = 4;  break;
+    case BDM_BUTTON_MENU_C: x = 80;  y = 4;  break;
+    case BDM_BUTTON_MENU_D: x = 112; y = 4;  break;
+    case BDM_BUTTON_MENU_E: x = 144; y = 4;  break;
+    case BDM_BUTTON_PAGE_LEFT:  x = 3;   y = 60; break;
+    case BDM_BUTTON_PAGE_RIGHT: x = 156; y = 60; break;
+    default: return 0;
+    }
+    if (out_x_fp) *out_x_fp = ((int32_t)x << 16) | 0x8000;
+    if (out_y_fp) *out_y_fp = ((int32_t)y << 16) | 0x8000;
+    return 1;
+}
+
+void bdm_fe_set_panel_button(bdm_input_t *input, bdm_fe_touch_state_t *touch, bdm_core_t *core, bdm_button_t button, int pressed) {
+    int32_t x_fp = 0, y_fp = 0;
+    if (!input || !touch || !bdm_fe_panel_button_to_pen_fp(button, &x_fp, &y_fp)) return;
+    bdm_input_set_button(input, button, pressed != 0);
+    if (pressed) bdm_fe_touch_apply_down_fp(input, touch, core, x_fp, y_fp);
+    else bdm_fe_touch_request_up_fp(input, touch, core, x_fp, y_fp);
+}
+
+static int fe_ascii_key_to_panel_button(unsigned key, bdm_button_t *out) {
+    if (key >= 'a' && key <= 'z') key -= 'a' - 'A';
+    switch (key) {
+    case 'A': case 'Z': if (out) *out = BDM_BUTTON_MENU_A; return 1;
+    case 'B': case 'X': if (out) *out = BDM_BUTTON_MENU_B; return 1;
+    case 'C': if (out) *out = BDM_BUTTON_MENU_C; return 1;
+    case 'D': if (out) *out = BDM_BUTTON_MENU_D; return 1;
+    case 'E': if (out) *out = BDM_BUTTON_MENU_E; return 1;
+    case '[': case '<': if (out) *out = BDM_BUTTON_PAGE_LEFT; return 1;
+    case ']': case '>': if (out) *out = BDM_BUTTON_PAGE_RIGHT; return 1;
+    default: return 0;
+    }
+}
+
 void bdm_fe_set_button_key_ascii(bdm_input_t *input, unsigned key, int pressed, int *quit_requested, bdm_core_t *core, bdm_fe_touch_state_t *touch) {
     if (key >= 'a' && key <= 'z') key -= 'a' - 'A';
+    bdm_button_t panel_button;
+    if (fe_ascii_key_to_panel_button(key, &panel_button)) {
+        bdm_fe_set_panel_button(input, touch, core, panel_button, pressed);
+        return;
+    }
     switch (key) {
     case 27u:
         if (pressed && quit_requested) *quit_requested = 1;
         break;
-    case 'Z':
-        bdm_input_set_button(input, BDM_BUTTON_A, pressed != 0);
-        break;
-    case 'X':
-        bdm_input_set_button(input, BDM_BUTTON_B, pressed != 0);
-        break;
     case '\r':
     case '\n':
-        bdm_input_set_button(input, BDM_BUTTON_START, pressed != 0);
+        bdm_fe_set_panel_button(input, touch, core, BDM_BUTTON_PAGE_RIGHT, pressed);
         break;
     case 8u:
-        bdm_input_set_button(input, BDM_BUTTON_SELECT, pressed != 0);
+        bdm_fe_set_panel_button(input, touch, core, BDM_BUTTON_PAGE_LEFT, pressed);
         break;
     case 'R':
         if (pressed && core) {

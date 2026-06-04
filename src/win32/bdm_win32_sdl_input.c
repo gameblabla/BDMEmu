@@ -13,6 +13,7 @@
 struct bdm_win32_sdl_input {
     int initialized;
     char status[96];
+    uint8_t panel_down[BDM_BUTTON_COUNT];
 #if defined(BDM_WIN64_FRONTEND)
     SDL_Gamepad *pads[8];
 #endif
@@ -51,8 +52,8 @@ void bdm_win32_sdl_input_destroy(bdm_win32_sdl_input_t *s) {
     free(s);
 }
 
-void bdm_win32_sdl_input_poll(bdm_win32_sdl_input_t *s, bdm_input_t *input, int *quit_requested) {
-    (void)s; (void)input; (void)quit_requested;
+void bdm_win32_sdl_input_poll(bdm_win32_sdl_input_t *s, bdm_input_t *input, bdm_core_t *core, bdm_fe_touch_state_t *touch, int *quit_requested) {
+    (void)s; (void)input; (void)core; (void)touch; (void)quit_requested;
 #if defined(BDM_WIN64_FRONTEND)
     if (!s || !s->initialized) return;
     SDL_Event ev;
@@ -70,12 +71,24 @@ void bdm_win32_sdl_input_poll(bdm_win32_sdl_input_t *s, bdm_input_t *input, int 
         case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
         case SDL_EVENT_GAMEPAD_BUTTON_UP: {
             int down = ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+            bdm_button_t button = BDM_BUTTON_COUNT;
             switch (ev.gbutton.button) {
-            case SDL_GAMEPAD_BUTTON_SOUTH: bdm_input_set_button(input, BDM_BUTTON_A, down != 0); break;
-            case SDL_GAMEPAD_BUTTON_EAST:  bdm_input_set_button(input, BDM_BUTTON_B, down != 0); break;
-            case SDL_GAMEPAD_BUTTON_START: bdm_input_set_button(input, BDM_BUTTON_START, down != 0); break;
-            case SDL_GAMEPAD_BUTTON_BACK:  bdm_input_set_button(input, BDM_BUTTON_SELECT, down != 0); break;
+            case SDL_GAMEPAD_BUTTON_SOUTH: button = BDM_BUTTON_MENU_A; break;
+            case SDL_GAMEPAD_BUTTON_EAST:  button = BDM_BUTTON_MENU_B; break;
+            case SDL_GAMEPAD_BUTTON_WEST:  button = BDM_BUTTON_MENU_C; break;
+            case SDL_GAMEPAD_BUTTON_NORTH: button = BDM_BUTTON_MENU_D; break;
+            case SDL_GAMEPAD_BUTTON_START: button = BDM_BUTTON_MENU_E; break;
+            case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: button = BDM_BUTTON_PAGE_LEFT; break;
+            case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER: button = BDM_BUTTON_PAGE_RIGHT; break;
+            case SDL_GAMEPAD_BUTTON_BACK: button = BDM_BUTTON_PAGE_LEFT; break;
             default: break;
+            }
+            if (button < BDM_BUTTON_COUNT) {
+                uint8_t v = down ? 1u : 0u;
+                if (s->panel_down[button] != v) {
+                    s->panel_down[button] = v;
+                    bdm_fe_set_panel_button(input, touch, core, button, down);
+                }
             }
             break;
         }

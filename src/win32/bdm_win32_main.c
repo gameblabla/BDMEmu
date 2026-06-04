@@ -105,6 +105,15 @@
 #define IDM_INPUT_DEBUG          5012
 #define IDM_INPUT_RESET_OFFSET   5013
 #define IDM_INPUT_CROSSHAIR      5014
+#define IDM_INPUT_VISIBLE_PANEL   5015
+#define IDM_INPUT_PANEL_BASE      5100
+#define IDM_INPUT_PANEL_A         (IDM_INPUT_PANEL_BASE + 0)
+#define IDM_INPUT_PANEL_B         (IDM_INPUT_PANEL_BASE + 1)
+#define IDM_INPUT_PANEL_C         (IDM_INPUT_PANEL_BASE + 2)
+#define IDM_INPUT_PANEL_D         (IDM_INPUT_PANEL_BASE + 3)
+#define IDM_INPUT_PANEL_E         (IDM_INPUT_PANEL_BASE + 4)
+#define IDM_INPUT_PANEL_LEFT      (IDM_INPUT_PANEL_BASE + 5)
+#define IDM_INPUT_PANEL_RIGHT     (IDM_INPUT_PANEL_BASE + 6)
 
 #define IDM_HELP_INPUT           9001
 #define IDM_HELP_ABOUT           9002
@@ -119,6 +128,8 @@ typedef struct bdm_win32_app {
     HWND hwnd;
     HWND video_hwnd;
     HWND status_hwnd;
+    HWND panel_buttons[7];
+    HWND panel_bg[3];
     HMENU main_menu;
     HMENU recent_menu;
     HACCEL accel;
@@ -126,6 +137,7 @@ typedef struct bdm_win32_app {
     bdm_fe_options_t opt;
     bdm_fe_machine_t machine;
     bdm_fe_touch_state_t touch;
+    uint8_t joy_panel_down[BDM_BUTTON_COUNT];
     int machine_loaded;
     int machine_failed;
 
@@ -160,11 +172,29 @@ typedef struct bdm_win32_app {
     bdm_win32_recent_t recent[BDM_UI_RECENT_MAX];
     int recent_count;
     int touch_crosshair_cursor;
+    int visible_panel_buttons;
     int timer_period_set;
 } bdm_win32_app_t;
 
 static LRESULT CALLBACK main_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 static LRESULT CALLBACK video_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
+
+#define BDM_WIN32_APP_ICON_ID 1
+
+static HICON app_load_icon(HINSTANCE instance, int small) {
+    HICON icon = LoadIconA(instance, MAKEINTRESOURCEA(BDM_WIN32_APP_ICON_ID));
+#if !defined(BDM_WIN32_WIN31)
+    if (!icon) {
+        icon = (HICON)LoadImageA(instance, MAKEINTRESOURCEA(BDM_WIN32_APP_ICON_ID), IMAGE_ICON,
+                                 small ? GetSystemMetrics(SM_CXSMICON) : GetSystemMetrics(SM_CXICON),
+                                 small ? GetSystemMetrics(SM_CYSMICON) : GetSystemMetrics(SM_CYICON), LR_DEFAULTCOLOR);
+    }
+#else
+    (void)small;
+#endif
+    if (!icon) icon = LoadIcon(NULL, IDI_APPLICATION);
+    return icon;
+}
 
 static uint64_t ticks_ms(void) {
 #if defined(BDM_WIN64_FRONTEND)
@@ -585,6 +615,7 @@ static void app_update_menu_state(bdm_win32_app_t *app) {
     EnableMenuItem(m, IDM_AUDIO_WASAPI, MF_BYCOMMAND | MF_ENABLED);
 #endif
     CheckMenuItem(m, IDM_INPUT_CROSSHAIR, MF_BYCOMMAND | (app->touch_crosshair_cursor ? MF_CHECKED : MF_UNCHECKED));
+    CheckMenuItem(m, IDM_INPUT_VISIBLE_PANEL, MF_BYCOMMAND | (app->visible_panel_buttons ? MF_CHECKED : MF_UNCHECKED));
     CheckMenuItem(m, IDM_INPUT_DEBUG, MF_BYCOMMAND | (app->opt.touch_debug ? MF_CHECKED : MF_UNCHECKED));
     DrawMenuBar(app->hwnd);
 }
@@ -660,6 +691,7 @@ static HMENU app_create_menu(bdm_win32_app_t *app) {
     AppendMenuA(input_menu, MF_STRING, IDM_INPUT_HOLD_INC, "Minimum touch hold +5 ms");
     AppendMenuA(input_menu, MF_STRING, IDM_INPUT_DEBUG, "Touch debug logging");
     AppendMenuA(input_menu, MF_STRING, IDM_INPUT_CROSSHAIR, "Use touch &crosshair cursor");
+    AppendMenuA(input_menu, MF_STRING, IDM_INPUT_VISIBLE_PANEL, "Show hardware &panel buttons");
 
     AppendMenuA(help_menu, MF_STRING, IDM_HELP_INPUT, "&Input Mapping");
     AppendMenuA(help_menu, MF_STRING, IDM_HELP_ABOUT, "&About");
@@ -692,16 +724,74 @@ static HACCEL app_create_accel(void) {
     return CreateAcceleratorTableA(acc, (int)(sizeof(acc) / sizeof(acc[0])));
 }
 
+static void app_redraw_shell(bdm_win32_app_t *app) {
+    if (!app || !app->hwnd) return;
+    /*
+     * The LCD child window is moved when the optional hardware-panel buttons are
+     * shown/hidden.  Without forcing the parent frame through a real paint pass,
+     * the newly exposed margin can retain stale LCD pixels until the next user
+     * resize.  Redraw the shell and children once after every layout-affecting
+     * toggle so the gap behind A-E/Page controls is cleared immediately.
+     */
+    RedrawWindow(app->hwnd, NULL, NULL,
+                 RDW_INVALIDATE | RDW_ERASE | RDW_ERASENOW | RDW_ALLCHILDREN | RDW_UPDATENOW);
+    for (int i = 0; i < 3; ++i) {
+        if (app->panel_bg[i]) RedrawWindow(app->panel_bg[i], NULL, NULL,
+                                           RDW_INVALIDATE | RDW_ERASE | RDW_ERASENOW | RDW_UPDATENOW);
+    }
+    for (int i = 0; i < 7; ++i) {
+        if (app->panel_buttons[i]) RedrawWindow(app->panel_buttons[i], NULL, NULL,
+                                               RDW_INVALIDATE | RDW_ERASE | RDW_ERASENOW | RDW_UPDATENOW);
+    }
+    if (app->video_hwnd) InvalidateRect(app->video_hwnd, NULL, FALSE);
+}
+
 static void app_layout_children(bdm_win32_app_t *app) {
     RECT rc;
     int status_h = BDM_UI_STATUS_H;
+    int panel_h = app && app->visible_panel_buttons ? 30 : 0;
+    int side_w = app && app->visible_panel_buttons ? 42 : 0;
+    int content_h, content_w, video_y;
     if (!app || !app->hwnd) return;
     GetClientRect(app->hwnd, &rc);
-    if (rc.bottom - rc.top < status_h) status_h = 0;
-    if (app->status_hwnd) MoveWindow(app->status_hwnd, 0, rc.bottom - status_h, rc.right - rc.left, status_h, TRUE);
-    if (app->video_hwnd) MoveWindow(app->video_hwnd, 0, 0, rc.right - rc.left, rc.bottom - rc.top - status_h, TRUE);
-}
+    content_w = rc.right - rc.left;
+    content_h = rc.bottom - rc.top;
+    if (content_h < status_h) status_h = 0;
+    if (content_h - status_h < panel_h) panel_h = 0;
+    if (content_w < side_w * 2 + 40) side_w = 0;
+    video_y = panel_h;
 
+    if (app->status_hwnd) MoveWindow(app->status_hwnd, 0, content_h - status_h, content_w, status_h, TRUE);
+
+    for (int i = 0; i < 3; ++i) {
+        if (app->panel_bg[i]) ShowWindow(app->panel_bg[i], app->visible_panel_buttons ? SW_SHOWNA : SW_HIDE);
+    }
+    for (int i = 0; i < 7; ++i) {
+        if (app->panel_buttons[i]) ShowWindow(app->panel_buttons[i], app->visible_panel_buttons ? SW_SHOWNA : SW_HIDE);
+    }
+    if (app->visible_panel_buttons) {
+        int bw = content_w / 9;
+        if (bw < 34) bw = 34;
+        if (bw > 72) bw = 72;
+        int gap = 4;
+        int total = 5 * bw + 4 * gap;
+        int x = (content_w - total) / 2;
+        int side_h = content_h - status_h - video_y - 4;
+        if (x < 0) x = 0;
+        if (side_h < 1) side_h = 1;
+        if (app->panel_bg[0]) MoveWindow(app->panel_bg[0], 0, 0, content_w, panel_h, TRUE);
+        if (app->panel_bg[1]) MoveWindow(app->panel_bg[1], 0, video_y, side_w, side_h + 4, TRUE);
+        if (app->panel_bg[2]) MoveWindow(app->panel_bg[2], content_w - side_w, video_y, side_w, side_h + 4, TRUE);
+        for (int i = 0; i < 5; ++i) MoveWindow(app->panel_buttons[i], x + i * (bw + gap), 2, bw, panel_h - 4, TRUE);
+        MoveWindow(app->panel_buttons[5], 2, video_y + 2, side_w - 4, side_h, TRUE);
+        MoveWindow(app->panel_buttons[6], content_w - side_w + 2, video_y + 2, side_w - 4, side_h, TRUE);
+        for (int i = 0; i < 3; ++i) {
+            if (app->panel_bg[i]) RedrawWindow(app->panel_bg[i], NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_ERASENOW | RDW_UPDATENOW);
+        }
+    }
+
+    if (app->video_hwnd) MoveWindow(app->video_hwnd, side_w, video_y, content_w - side_w * 2, content_h - status_h - video_y, TRUE);
+}
 static void app_update_title(bdm_win32_app_t *app) {
     char title[512];
     if (!app || !app->hwnd) return;
@@ -794,6 +884,7 @@ static void app_stop_machine(bdm_win32_app_t *app) {
         bdm_fe_machine_destroy(&app->machine);
     }
     memset(&app->touch, 0, sizeof(app->touch));
+    memset(app->joy_panel_down, 0, sizeof(app->joy_panel_down));
     app->machine_loaded = 0;
     app->paused = 0;
     app_update_status(app);
@@ -821,6 +912,7 @@ static int app_start_machine(bdm_win32_app_t *app) {
     app->machine_loaded = 1;
     app->machine_failed = 0;
     memset(&app->touch, 0, sizeof(app->touch));
+    memset(app->joy_panel_down, 0, sizeof(app->joy_panel_down));
     app->touch.min_hold_steps = app_touch_hold_steps(app, app->opt.touch_hold_ms);
     app->touch.debug = app->opt.touch_debug;
     if (app->opt.enable_audio) app->audio_backend = bdm_win32_audio_create(app->machine.sound, app->opt.sample_rate,
@@ -1031,14 +1123,29 @@ static void app_reset_machine(bdm_win32_app_t *app) {
     app_update_status(app);
 }
 
+static void app_set_panel_button(bdm_win32_app_t *app, bdm_button_t button, int pressed) {
+    if (!app || !app->machine_loaded) return;
+    bdm_fe_set_panel_button(app->machine.input, &app->touch, app->machine.core, button, pressed);
+}
+
+static void app_update_panel_button_latch(bdm_win32_app_t *app, bdm_button_t button, int down) {
+    if (!app || button < 0 || button >= BDM_BUTTON_COUNT) return;
+    uint8_t v = down ? 1u : 0u;
+    if (app->joy_panel_down[button] == v) return;
+    app->joy_panel_down[button] = v;
+    app_set_panel_button(app, button, down);
+}
+
 static void apply_virtual_key(bdm_win32_app_t *app, UINT vk, int pressed) {
     if (!app || !app->machine_loaded) return;
     switch (vk) {
-    case 'Z': bdm_input_set_button(app->machine.input, BDM_BUTTON_A, pressed != 0); break;
-    case 'X': bdm_input_set_button(app->machine.input, BDM_BUTTON_B, pressed != 0); break;
-    case VK_RETURN: bdm_input_set_button(app->machine.input, BDM_BUTTON_START, pressed != 0); break;
-    case VK_RSHIFT:
-    case VK_BACK: bdm_input_set_button(app->machine.input, BDM_BUTTON_SELECT, pressed != 0); break;
+    case 'A': case 'Z': app_set_panel_button(app, BDM_BUTTON_MENU_A, pressed); break;
+    case 'B': case 'X': app_set_panel_button(app, BDM_BUTTON_MENU_B, pressed); break;
+    case 'C': app_set_panel_button(app, BDM_BUTTON_MENU_C, pressed); break;
+    case 'D': app_set_panel_button(app, BDM_BUTTON_MENU_D, pressed); break;
+    case 'E': app_set_panel_button(app, BDM_BUTTON_MENU_E, pressed); break;
+    case VK_LEFT: case VK_BACK: app_set_panel_button(app, BDM_BUTTON_PAGE_LEFT, pressed); break;
+    case VK_RIGHT: case VK_RETURN: app_set_panel_button(app, BDM_BUTTON_PAGE_RIGHT, pressed); break;
     default: break;
     }
 }
@@ -1046,24 +1153,23 @@ static void apply_virtual_key(bdm_win32_app_t *app, UINT vk, int pressed) {
 static void poll_winmm_gamepads(bdm_win32_app_t *app) {
 #if !defined(BDM_WIN64_FRONTEND)
     if (!app || !app->machine_loaded) return;
-#if defined(BDM_WIN32_WIN31)
-    JOYINFO ji;
-    memset(&ji, 0, sizeof(ji));
-    if (joyGetPos(JOYSTICKID1, &ji) != JOYERR_NOERROR) return;
-    bdm_input_set_button(app->machine.input, BDM_BUTTON_A, (ji.wButtons & JOY_BUTTON1) != 0);
-    bdm_input_set_button(app->machine.input, BDM_BUTTON_B, (ji.wButtons & JOY_BUTTON2) != 0);
-    bdm_input_set_button(app->machine.input, BDM_BUTTON_START, (ji.wButtons & JOY_BUTTON3) != 0);
-    bdm_input_set_button(app->machine.input, BDM_BUTTON_SELECT, (ji.wButtons & JOY_BUTTON4) != 0);
-#else
     JOYINFOEX jx;
     memset(&jx, 0, sizeof(jx));
     jx.dwSize = sizeof(jx);
     jx.dwFlags = JOY_RETURNBUTTONS;
     if (joyGetPosEx(JOYSTICKID1, &jx) != JOYERR_NOERROR) return;
-    bdm_input_set_button(app->machine.input, BDM_BUTTON_A, (jx.dwButtons & JOY_BUTTON1) != 0);
-    bdm_input_set_button(app->machine.input, BDM_BUTTON_B, (jx.dwButtons & JOY_BUTTON2) != 0);
-    bdm_input_set_button(app->machine.input, BDM_BUTTON_START, (jx.dwButtons & JOY_BUTTON3) != 0);
-    bdm_input_set_button(app->machine.input, BDM_BUTTON_SELECT, (jx.dwButtons & JOY_BUTTON4) != 0);
+    app_update_panel_button_latch(app, BDM_BUTTON_MENU_A, (jx.dwButtons & JOY_BUTTON1) != 0);
+    app_update_panel_button_latch(app, BDM_BUTTON_MENU_B, (jx.dwButtons & JOY_BUTTON2) != 0);
+    app_update_panel_button_latch(app, BDM_BUTTON_MENU_C, (jx.dwButtons & JOY_BUTTON3) != 0);
+    app_update_panel_button_latch(app, BDM_BUTTON_MENU_D, (jx.dwButtons & JOY_BUTTON4) != 0);
+#ifdef JOY_BUTTON5
+    app_update_panel_button_latch(app, BDM_BUTTON_MENU_E, (jx.dwButtons & JOY_BUTTON5) != 0);
+#endif
+#ifdef JOY_BUTTON6
+    app_update_panel_button_latch(app, BDM_BUTTON_PAGE_LEFT, (jx.dwButtons & JOY_BUTTON6) != 0);
+#endif
+#ifdef JOY_BUTTON7
+    app_update_panel_button_latch(app, BDM_BUTTON_PAGE_RIGHT, (jx.dwButtons & JOY_BUTTON7) != 0);
 #endif
 #else
     (void)app;
@@ -1101,13 +1207,36 @@ static void process_raw_input(bdm_win32_app_t *app, HRAWINPUT hri) {
 static void register_raw_keyboard(HWND hwnd) { (void)hwnd; }
 #endif
 
+
+static LRESULT CALLBACK panel_bg_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    (void)lp;
+    switch (msg) {
+    case WM_ERASEBKGND: {
+        RECT rc;
+        GetClientRect(hwnd, &rc);
+        FillRect((HDC)wp, &rc, (HBRUSH)GetStockObject(BLACK_BRUSH));
+        return 1;
+    }
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC dc = BeginPaint(hwnd, &ps);
+        FillRect(dc, &ps.rcPaint, (HBRUSH)GetStockObject(BLACK_BRUSH));
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    }
+    return DefWindowProc(hwnd, msg, wp, lp);
+}
+
 static int create_main_window(bdm_win32_app_t *app) {
 #if defined(BDM_WIN32_WIN31)
     WNDCLASSA wc;
     WNDCLASSA vc;
+    WNDCLASSA pc;
 #else
     WNDCLASSEXA wc;
     WNDCLASSEXA vc;
+    WNDCLASSEXA pc;
 #endif
     DWORD style = WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
     RECT r;
@@ -1118,8 +1247,11 @@ static int create_main_window(bdm_win32_app_t *app) {
     wc.lpfnWndProc = main_wndproc;
     wc.hInstance = app->instance;
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-    wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
-    wc.hbrBackground = NULL;
+    wc.hIcon = app_load_icon(app->instance, 0);
+#if !defined(BDM_WIN32_WIN31)
+    wc.hIconSm = app_load_icon(app->instance, 1);
+#endif
+    wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
     wc.lpszClassName = "BDMWin32Frontend";
 #if defined(BDM_WIN32_WIN31)
     if (!RegisterClassA(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return 0;
@@ -1134,14 +1266,32 @@ static int create_main_window(bdm_win32_app_t *app) {
     vc.lpfnWndProc = video_wndproc;
     vc.hInstance = app->instance;
     vc.hCursor = LoadCursor(NULL, IDC_ARROW);
-    vc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+    vc.hIcon = app_load_icon(app->instance, 0);
+#if !defined(BDM_WIN32_WIN31)
+    vc.hIconSm = app_load_icon(app->instance, 1);
+#endif
     vc.style = CS_OWNDC;
-    vc.hbrBackground = NULL;
+    vc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
     vc.lpszClassName = "BDMWin32VideoView";
 #if defined(BDM_WIN32_WIN31)
     if (!RegisterClassA(&vc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return 0;
 #else
     if (!RegisterClassExA(&vc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return 0;
+#endif
+
+    memset(&pc, 0, sizeof(pc));
+#if !defined(BDM_WIN32_WIN31)
+    pc.cbSize = sizeof(pc);
+#endif
+    pc.lpfnWndProc = panel_bg_wndproc;
+    pc.hInstance = app->instance;
+    pc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    pc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+    pc.lpszClassName = "BDMWin32PanelBackground";
+#if defined(BDM_WIN32_WIN31)
+    if (!RegisterClassA(&pc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return 0;
+#else
+    if (!RegisterClassExA(&pc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return 0;
 #endif
 
     app->main_menu = app_create_menu(app);
@@ -1161,6 +1311,10 @@ static int create_main_window(bdm_win32_app_t *app) {
                                 NULL, app->main_menu, app->instance, app);
 #endif
     if (!app->hwnd) return 0;
+    SendMessage(app->hwnd, WM_SETICON, ICON_BIG, (LPARAM)app_load_icon(app->instance, 0));
+#if !defined(BDM_WIN32_WIN31)
+    SendMessage(app->hwnd, WM_SETICON, ICON_SMALL, (LPARAM)app_load_icon(app->instance, 1));
+#endif
 #if defined(BDM_WIN32_WIN31)
     app->video_hwnd = CreateWindowA(vc.lpszClassName, "", WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_CLIPSIBLINGS,
                                     0, 0, 1, 1, app->hwnd, NULL, app->instance, app);
@@ -1169,6 +1323,29 @@ static int create_main_window(bdm_win32_app_t *app) {
                                       0, 0, 1, 1, app->hwnd, NULL, app->instance, app);
 #endif
     if (!app->video_hwnd) return 0;
+    for (int i = 0; i < 3; ++i) {
+#if defined(BDM_WIN32_WIN31)
+        app->panel_bg[i] = CreateWindowA("BDMWin32PanelBackground", "", WS_CHILD | WS_CLIPSIBLINGS,
+                                         0, 0, 1, 1, app->hwnd, NULL, app->instance, app);
+#else
+        app->panel_bg[i] = CreateWindowExA(0, "BDMWin32PanelBackground", "", WS_CHILD | WS_CLIPSIBLINGS,
+                                           0, 0, 1, 1, app->hwnd, NULL, app->instance, app);
+#endif
+    }
+    {
+        const char *labels[7] = { "A", "B", "C", "D", "E", "<", ">" };
+        UINT ids[7] = { IDM_INPUT_PANEL_A, IDM_INPUT_PANEL_B, IDM_INPUT_PANEL_C, IDM_INPUT_PANEL_D, IDM_INPUT_PANEL_E, IDM_INPUT_PANEL_LEFT, IDM_INPUT_PANEL_RIGHT };
+        for (int i = 0; i < 7; ++i) {
+#if defined(BDM_WIN32_WIN31)
+            app->panel_buttons[i] = CreateWindowA("BUTTON", labels[i], WS_CHILD | WS_CLIPSIBLINGS | BS_PUSHBUTTON,
+                                                 0, 0, 1, 1, app->hwnd, (HMENU)(UINT_PTR)ids[i], app->instance, NULL);
+#else
+            app->panel_buttons[i] = CreateWindowExA(0, "BUTTON", labels[i], WS_CHILD | WS_CLIPSIBLINGS | BS_PUSHBUTTON,
+                                                   0, 0, 1, 1, app->hwnd, (HMENU)(UINT_PTR)ids[i], app->instance, NULL);
+#endif
+            if (app->panel_buttons[i]) SetWindowPos(app->panel_buttons[i], HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+    }
 #if defined(BDM_WIN32_WIN31)
     app->status_hwnd = CreateWindowA("STATIC", "", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | SS_LEFTNOWORDWRAP,
                                      0, 0, 1, BDM_UI_STATUS_H, app->hwnd, NULL, app->instance, NULL);
@@ -1194,8 +1371,32 @@ static void app_handle_recent(bdm_win32_app_t *app, UINT id) {
     app_start_machine(app);
 }
 
+static bdm_button_t app_panel_button_from_command(UINT id) {
+    switch (id) {
+    case IDM_INPUT_PANEL_A: return BDM_BUTTON_MENU_A;
+    case IDM_INPUT_PANEL_B: return BDM_BUTTON_MENU_B;
+    case IDM_INPUT_PANEL_C: return BDM_BUTTON_MENU_C;
+    case IDM_INPUT_PANEL_D: return BDM_BUTTON_MENU_D;
+    case IDM_INPUT_PANEL_E: return BDM_BUTTON_MENU_E;
+    case IDM_INPUT_PANEL_LEFT: return BDM_BUTTON_PAGE_LEFT;
+    case IDM_INPUT_PANEL_RIGHT: return BDM_BUTTON_PAGE_RIGHT;
+    default: return BDM_BUTTON_COUNT;
+    }
+}
+
+static void app_click_panel_button(bdm_win32_app_t *app, bdm_button_t button) {
+    if (!app || button >= BDM_BUTTON_COUNT) return;
+    app_set_panel_button(app, button, 1);
+    app_set_panel_button(app, button, 0);
+    if (app->video_hwnd) SetFocus(app->video_hwnd);
+}
+
 static void app_handle_command(bdm_win32_app_t *app, UINT id) {
     if (!app) return;
+    if (id >= IDM_INPUT_PANEL_BASE && id <= IDM_INPUT_PANEL_RIGHT) {
+        app_click_panel_button(app, app_panel_button_from_command(id));
+        return;
+    }
     if (id >= IDM_FILE_RECENT_BASE && id < IDM_FILE_RECENT_BASE + BDM_UI_RECENT_MAX) { app_handle_recent(app, id); return; }
     if (id > IDM_VIDEO_SCALE_BASE && id <= IDM_VIDEO_SCALE_BASE + 6) { app_resize_to_scale(app, id - IDM_VIDEO_SCALE_BASE); return; }
     switch (id) {
@@ -1249,11 +1450,19 @@ static void app_handle_command(bdm_win32_app_t *app, UINT id) {
     case IDM_INPUT_HOLD_INC: if (app->opt.touch_hold_ms <= 4995) app->opt.touch_hold_ms += 5; app->touch.min_hold_steps = app_touch_hold_steps(app, app->opt.touch_hold_ms); app_update_status(app); break;
     case IDM_INPUT_DEBUG: app->opt.touch_debug = !app->opt.touch_debug; app->touch.debug = app->opt.touch_debug; app_update_status(app); break;
     case IDM_INPUT_CROSSHAIR: app->touch_crosshair_cursor = !app->touch_crosshair_cursor; SetCursor(LoadCursor(NULL, app->touch_crosshair_cursor ? IDC_CROSS : IDC_ARROW)); app_update_status(app); break;
+    case IDM_INPUT_VISIBLE_PANEL:
+        app->visible_panel_buttons = !app->visible_panel_buttons;
+        app_layout_children(app);
+        app_redraw_shell(app);
+        app_update_status(app);
+        break;
     case IDM_HELP_INPUT:
         app_message(app->hwnd, MB_ICONINFORMATION, "Input Mapping",
                     "Pen: mouse/touch on the LCD\n"
-                    "A: Z\nB: X\nStart: Enter\nSelect: Right Shift or Backspace\n"
-                    "Gamepad: South/East/Start/Back on Win64 SDL3, buttons 1-4 on Win32 WinMM\n"
+                    "Menu A-E: A/B/C/D/E keys (Z/X also alias A/B)\n"
+                    "Page left/right: Left/Right arrows, Backspace/Enter\n"
+                    "Visible controls: Input > Show hardware panel buttons\n"
+                    "Gamepad: face buttons map to panel A-E and shoulder/extra buttons to page L/R\n"
                     "Quick save/load: F5/F8\nFullscreen: F11\nReset touch offset: Ctrl+0");
         break;
     case IDM_HELP_ABOUT:
@@ -1277,11 +1486,20 @@ static LRESULT CALLBACK main_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) 
         SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)cs->lpCreateParams);
         return DefWindowProc(hwnd, msg, wp, lp);
     }
-    case WM_ERASEBKGND:
+    case WM_ERASEBKGND: {
+        HDC dc = (HDC)wp;
+        RECT rc;
+        GetClientRect(hwnd, &rc);
+        FillRect(dc, &rc, (HBRUSH)GetStockObject(BLACK_BRUSH));
         return 1;
+    }
     case WM_PAINT: {
         PAINTSTRUCT ps;
-        BeginPaint(hwnd, &ps);
+        HDC dc = BeginPaint(hwnd, &ps);
+        /* The parent owns the exposed frame around the LCD child.  Keep it
+         * deterministically black so toggling the optional hardware buttons
+         * never leaves stale game pixels behind the controls. */
+        FillRect(dc, &ps.rcPaint, (HBRUSH)GetStockObject(BLACK_BRUSH));
         EndPaint(hwnd, &ps);
         return 0;
     }
@@ -1489,7 +1707,7 @@ static int app_run(bdm_win32_app_t *app) {
                 pacer_reset = 0;
             }
 #if defined(BDM_WIN64_FRONTEND)
-            bdm_win32_sdl_input_poll(app->sdl_input, app->machine.input, &app->quit_requested);
+            bdm_win32_sdl_input_poll(app->sdl_input, app->machine.input, app->machine.core, &app->touch, &app->quit_requested);
 #else
             poll_winmm_gamepads(app);
 #endif

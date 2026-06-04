@@ -205,9 +205,9 @@ void Engine::penUp(float x, float y) {
     bdm_fe_touch_request_up_fp(m_machine.input, &m_touch, m_machine.core, xfp, yfp);
 }
 
-void Engine::setButton(int button, bool down) {
+void Engine::setPanelButton(int button, bool down) {
     if (!m_machine.input) return;
-    bdm_input_set_button(m_machine.input, (bdm_button_t)button, down);
+    bdm_fe_set_panel_button(m_machine.input, &m_touch, m_machine.core, (bdm_button_t)button, down);
 }
 
 bool Engine::saveState(const QString &path) {
