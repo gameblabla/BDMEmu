@@ -37,6 +37,9 @@ int32_t bdm_input_pen_x_fp(const bdm_input_t *input);
 int32_t bdm_input_pen_y_fp(const bdm_input_t *input);
 bool bdm_input_pen_down(const bdm_input_t *input);
 uint8_t bdm_input_read_port7(const bdm_input_t *input);
+uint8_t bdm_input_read_panel_port(const bdm_input_t *input);
+uint8_t bdm_input_panel_code(const bdm_input_t *input);
+bool bdm_input_button_down(const bdm_input_t *input, bdm_button_t button);
 
 /* Opaque subsystem snapshot.  Used by bdm_core save states. */
 size_t bdm_input_state_size(const bdm_input_t *input);
