@@ -568,11 +568,15 @@ static int sdl1_key_to_panel_button(SDLKey sym, bdm_button_t *out) {
 }
 
 static void sdl1_set_panel_button(bdm_input_t *input, sdl_touch_state_t *touch, bdm_core_t *core, bdm_button_t button, int pressed) {
-    int32_t x_fp = 0, y_fp = 0;
-    if (!input || !touch || !bdm_fe_panel_button_to_pen_fp(button, &x_fp, &y_fp)) return;
+    if (!input || button <= BDM_BUTTON_PEN || button >= BDM_BUTTON_COUNT) return;
     bdm_input_set_button(input, button, pressed != 0);
-    if (pressed) touch_apply_down_fp(input, touch, core, x_fp, y_fp);
-    else touch_request_up_fp(input, touch, core, x_fp, y_fp);
+    if (touch) {
+        int32_t x_fp = 0, y_fp = 0;
+        if (bdm_fe_panel_button_to_pen_fp(button, &x_fp, &y_fp)) {
+            if (pressed) touch_apply_down_fp(input, touch, core, x_fp, y_fp);
+            else touch_request_up_fp(input, touch, core, x_fp, y_fp);
+        }
+    }
 }
 
 static void set_key_button(bdm_input_t *input, SDLKey sym, int pressed, int *quit_requested, bdm_core_t *core, sdl_touch_state_t *touch, const sdl_options_t *opt) {

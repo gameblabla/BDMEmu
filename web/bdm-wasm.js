@@ -21,14 +21,14 @@ const DEFAULT_CONFIG = {
   }
 };
 const BUTTON_BITS = {};
-const PANEL_BUTTON_POINTS = {
-  MenuA: { x: 16, y: 4 }, MenuB: { x: 48, y: 4 }, MenuC: { x: 80, y: 4 }, MenuD: { x: 112, y: 4 }, MenuE: { x: 144, y: 4 },
-  MenuAAlias: { x: 16, y: 4 }, MenuBAlias: { x: 48, y: 4 }, PageLeft: { x: 3, y: 60 }, PageRight: { x: 156, y: 60 }
+const PANEL_BUTTON_MASKS = {
+  MenuA: 0x01, MenuB: 0x02, MenuC: 0x04, MenuD: 0x08, MenuE: 0x10,
+  MenuAAlias: 0x01, MenuBAlias: 0x02, PageLeft: 0x20, PageRight: 0x40
 };
 const STATUS_TEXT = { 0: 'empty', 1: 'ready', 3: 'running', 5: 'error' };
 const FRAME_RATE = 60;
 const STORE_KEY = 'bdm-wasm-config-v1';
-const WASM_BUILD_ID = 'bdm-wasm-20260604-visible-panel-buttons';
+const WASM_BUILD_ID = 'bdm-wasm-20260605-panel-port-buttons';
 const ROM_MAX_BYTES = 128 * 1024;
 
 let config = loadConfig();
@@ -461,27 +461,25 @@ function buttonsMask() {
 function effectivePenDown(now = performance.now()) {
   return !!pen.physicalDown || now < pen.holdUntil || pen.latchedFrames > 0;
 }
-function activePanelPoint() {
-  for (const [name, pt] of Object.entries(PANEL_BUTTON_POINTS)) if (pressed.has(`Panel:${name}`)) return pt;
-  for (const [name, pt] of Object.entries(PANEL_BUTTON_POINTS)) {
+function activePanelMask() {
+  let mask = 0;
+  for (const [name, bit] of Object.entries(PANEL_BUTTON_MASKS)) {
+    if (pressed.has(`Panel:${name}`)) mask |= bit;
     const code = config.keys[name];
-    if (code && pressed.has(code)) return pt;
+    if (code && pressed.has(code)) mask |= bit;
   }
-  if (pressed.has('BracketLeft')) return PANEL_BUTTON_POINTS.PageLeft;
-  if (pressed.has('BracketRight')) return PANEL_BUTTON_POINTS.PageRight;
-  if (pressed.has('Backspace')) return PANEL_BUTTON_POINTS.PageLeft;
-  if (pressed.has('Enter')) return PANEL_BUTTON_POINTS.PageRight;
-  return null;
+  if (pressed.has('BracketLeft') || pressed.has('Backspace')) mask |= PANEL_BUTTON_MASKS.PageLeft;
+  if (pressed.has('BracketRight') || pressed.has('Enter')) mask |= PANEL_BUTTON_MASKS.PageRight;
+  return mask >>> 0;
 }
 function currentInput(now = performance.now()) {
-  if (effectivePenDown(now)) return { x: pen.x | 0, y: pen.y | 0, down: 1 };
-  const panel = activePanelPoint();
-  if (panel) return { x: panel.x | 0, y: panel.y | 0, down: 1 };
-  return { x: pen.x | 0, y: pen.y | 0, down: 0 };
+  const mask = activePanelMask();
+  if (effectivePenDown(now)) return { mask, x: pen.x | 0, y: pen.y | 0, down: 1 };
+  return { mask, x: pen.x | 0, y: pen.y | 0, down: 0 };
 }
 function sendInput(now = performance.now()) {
   const inp = currentInput(now);
-  if (wasm?.bdm_wasm_set_input) wasm.bdm_wasm_set_input(0, inp.x, inp.y, inp.down);
+  if (wasm?.bdm_wasm_set_input) wasm.bdm_wasm_set_input(inp.mask, inp.x, inp.y, inp.down);
 }
 function resetAutoCalibration(start = false) {
   autoCal = { active: !!start && !!config.autoCalibration, stage: start && config.autoCalibration ? 'search' : 'idle', frame: 0, done: false, taps: 0 };
@@ -720,7 +718,7 @@ function runStartupFrames(count) {
   const n = Math.max(0, Math.min(120, count | 0));
   const steps = Math.max(1, Math.round(config.stepsPerSecond / FRAME_RATE));
   for (let i = 0; i < n; ++i) {
-    { const inp = currentInput(); wasm.bdm_wasm_frame(steps, 0, inp.x, inp.y, inp.down); }
+    { const inp = currentInput(); wasm.bdm_wasm_frame(steps, inp.mask, inp.x, inp.y, inp.down); }
     if (!pen.physicalDown && pen.latchedFrames > 0) --pen.latchedFrames;
     pullAudio();
   }
@@ -784,7 +782,7 @@ function tick(now) {
     let ran = 0;
     while (limiterAcc >= interval && ran < 4) {
       if (maybeRealtimeAutoCalibration()) { limiterAcc -= interval; ran++; continue; }
-      { const inp = currentInput(now); wasm.bdm_wasm_frame(frameSteps(), 0, inp.x, inp.y, inp.down); }
+      { const inp = currentInput(now); wasm.bdm_wasm_frame(frameSteps(), inp.mask, inp.x, inp.y, inp.down); }
       if (!pen.physicalDown && pen.latchedFrames > 0) --pen.latchedFrames;
       pullAudio();
       limiterAcc -= interval;
@@ -907,7 +905,7 @@ function initUi() {
     for (const b of els.hardwarePanel.querySelectorAll('[data-panel]')) {
       const name = b.getAttribute('data-panel');
       const set = down => {
-        if (!PANEL_BUTTON_POINTS[name]) return;
+        if (!PANEL_BUTTON_MASKS[name]) return;
         if (down) pressed.add(`Panel:${name}`); else pressed.delete(`Panel:${name}`);
         sendInput();
       };

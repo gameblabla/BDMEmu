@@ -541,6 +541,7 @@ int main(int argc, char **argv) {
     if (load_state_path) {
         if (load_state_file(load_state_path, core) != 0) { fprintf(stderr, "state load failed: %s\n", load_state_path); return 1; }
         else printf("loaded %s\n", load_state_path);
+        apply_input_state(input, pen_set, pen_x, pen_y, pen_down, pressed, port7_set, port7);
     }
 
     bdm_core_state_t st;

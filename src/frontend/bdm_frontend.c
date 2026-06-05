@@ -558,11 +558,20 @@ int bdm_fe_panel_button_to_pen_fp(bdm_button_t button, int32_t *out_x_fp, int32_
 }
 
 void bdm_fe_set_panel_button(bdm_input_t *input, bdm_fe_touch_state_t *touch, bdm_core_t *core, bdm_button_t button, int pressed) {
-    int32_t x_fp = 0, y_fp = 0;
-    if (!input || !touch || !bdm_fe_panel_button_to_pen_fp(button, &x_fp, &y_fp)) return;
+    if (!input || button <= BDM_BUTTON_PEN || button >= BDM_BUTTON_COUNT) return;
     bdm_input_set_button(input, button, pressed != 0);
-    if (pressed) bdm_fe_touch_apply_down_fp(input, touch, core, x_fp, y_fp);
-    else bdm_fe_touch_request_up_fp(input, touch, core, x_fp, y_fp);
+
+    /* The firmware decoder expects both a decoded panel command latch and the
+       matching analog panel position.  The core mirrors the command latch from
+       bdm_input_panel_code(); the frontend supplies the physical panel position
+       for the same held button. */
+    if (touch) {
+        int32_t x_fp = 0, y_fp = 0;
+        if (bdm_fe_panel_button_to_pen_fp(button, &x_fp, &y_fp)) {
+            if (pressed) bdm_fe_touch_apply_down_fp(input, touch, core, x_fp, y_fp);
+            else bdm_fe_touch_request_up_fp(input, touch, core, x_fp, y_fp);
+        }
+    }
 }
 
 static int fe_ascii_key_to_panel_button(unsigned key, bdm_button_t *out) {

@@ -138,6 +138,8 @@ typedef struct bdm_win32_app {
     bdm_fe_machine_t machine;
     bdm_fe_touch_state_t touch;
     uint8_t joy_panel_down[BDM_BUTTON_COUNT];
+    uint8_t click_panel_latch[BDM_BUTTON_COUNT];
+    unsigned click_panel_latch_frames[BDM_BUTTON_COUNT];
     int machine_loaded;
     int machine_failed;
 
@@ -885,6 +887,8 @@ static void app_stop_machine(bdm_win32_app_t *app) {
     }
     memset(&app->touch, 0, sizeof(app->touch));
     memset(app->joy_panel_down, 0, sizeof(app->joy_panel_down));
+    memset(app->click_panel_latch, 0, sizeof(app->click_panel_latch));
+    memset(app->click_panel_latch_frames, 0, sizeof(app->click_panel_latch_frames));
     app->machine_loaded = 0;
     app->paused = 0;
     app_update_status(app);
@@ -913,6 +917,8 @@ static int app_start_machine(bdm_win32_app_t *app) {
     app->machine_failed = 0;
     memset(&app->touch, 0, sizeof(app->touch));
     memset(app->joy_panel_down, 0, sizeof(app->joy_panel_down));
+    memset(app->click_panel_latch, 0, sizeof(app->click_panel_latch));
+    memset(app->click_panel_latch_frames, 0, sizeof(app->click_panel_latch_frames));
     app->touch.min_hold_steps = app_touch_hold_steps(app, app->opt.touch_hold_ms);
     app->touch.debug = app->opt.touch_debug;
     if (app->opt.enable_audio) app->audio_backend = bdm_win32_audio_create(app->machine.sound, app->opt.sample_rate,
@@ -1385,10 +1391,23 @@ static bdm_button_t app_panel_button_from_command(UINT id) {
 }
 
 static void app_click_panel_button(bdm_win32_app_t *app, bdm_button_t button) {
-    if (!app || button >= BDM_BUTTON_COUNT) return;
+    if (!app || button <= BDM_BUTTON_PEN || button >= BDM_BUTTON_COUNT) return;
     app_set_panel_button(app, button, 1);
-    app_set_panel_button(app, button, 0);
+    app->click_panel_latch[button] = 1u;
+    app->click_panel_latch_frames[button] = 5u;
     if (app->video_hwnd) SetFocus(app->video_hwnd);
+}
+
+static void app_tick_panel_button_latches(bdm_win32_app_t *app) {
+    if (!app) return;
+    for (unsigned i = 0; i < (unsigned)BDM_BUTTON_COUNT; ++i) {
+        if (!app->click_panel_latch[i]) continue;
+        if (app->click_panel_latch_frames[i] > 0u) --app->click_panel_latch_frames[i];
+        if (app->click_panel_latch_frames[i] == 0u) {
+            app->click_panel_latch[i] = 0u;
+            app_set_panel_button(app, (bdm_button_t)i, 0);
+        }
+    }
 }
 
 static void app_handle_command(bdm_win32_app_t *app, UINT id) {
@@ -1715,6 +1734,7 @@ static int app_run(bdm_win32_app_t *app) {
             uint64_t frame_steps = step_remainder / app->opt.fps;
             step_remainder %= app->opt.fps;
             bdm_status_t rc = bdm_fe_run_checked(app->machine.core, frame_steps);
+            app_tick_panel_button_latches(app);
             bdm_fe_touch_tick_release(app->machine.input, &app->touch, app->machine.core);
             if (rc != BDM_OK) {
                 bdm_core_state_t st;

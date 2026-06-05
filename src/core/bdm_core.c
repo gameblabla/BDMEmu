@@ -173,6 +173,7 @@ static uint8_t core_read8(void *opaque, uint16_t address) {
             case 0xffd4u: return c->timer8_tcnt[ch];
             }
         }
+        if (address == 0xffbau) return bdm_input_read_panel_port(c->input);
         if (address == 0xffbeu) return bdm_input_read_port7(c->input);
         if (address == 0xff8cu || address == 0xffdcu) return 0x84u; /* SCI SSR: TDRE|TEND */
         if (address == 0xff8du || address == 0xffddu) return 0xffu; /* SCI RDR */
@@ -543,6 +544,19 @@ size_t bdm_core_external_sram_size(const bdm_core_t *core) {
 
 bdm_status_t bdm_core_step(bdm_core_t *core) {
     if (!core) return BDM_ERR_INVALID_ARGUMENT;
+
+    /* The A-E top buttons and side page buttons are real hardware controls
+       surrounding the LCD.  The cartridge firmware's common input decoder
+       stores decoded panel commands in fbd2: A-E become 1-5 and the side
+       page buttons become 6/7.  The buttons are outside the active LCD ADC
+       area, so mirror their held hardware state into that decoded latch instead
+       of pretending they are normal stylus points. */
+    uint8_t panel_code = bdm_input_panel_code(core->input);
+    if (panel_code) {
+        core->internal_ram[0xfbd2u - BDM_IRAM_BASE] = 0x00u;
+        core->internal_ram[0xfbd3u - BDM_IRAM_BASE] = panel_code;
+    }
+
     int rc = h8_step(&core->cpu);
     if (rc > 0) return BDM_ERR_UNSUPPORTED_OPCODE;
 

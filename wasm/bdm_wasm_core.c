@@ -84,18 +84,13 @@ static int ensure_machine(void)
 static void apply_buttons(uint32_t mask, int pen_x, int pen_y, uint32_t pen_down)
 {
     if (!g_input) return;
-    if (!pen_down && mask) {
-        /* Compatibility for old JS callers: map the legacy button mask to
-           documented touch-panel locations instead of controller-style P7 bits. */
-        if (mask & 0x01u) { pen_x = 16;  pen_y = 4;  pen_down = 1u; }
-        else if (mask & 0x02u) { pen_x = 48;  pen_y = 4;  pen_down = 1u; }
-        else if (mask & 0x04u) { pen_x = 156; pen_y = 60; pen_down = 1u; }
-        else if (mask & 0x08u) { pen_x = 3;   pen_y = 60; pen_down = 1u; }
-    }
-    bdm_input_set_button(g_input, BDM_BUTTON_MENU_A, (mask & 0x01u) != 0u);
-    bdm_input_set_button(g_input, BDM_BUTTON_MENU_B, (mask & 0x02u) != 0u);
-    bdm_input_set_button(g_input, BDM_BUTTON_PAGE_RIGHT, (mask & 0x04u) != 0u);
-    bdm_input_set_button(g_input, BDM_BUTTON_PAGE_LEFT, (mask & 0x08u) != 0u);
+    bdm_input_set_button(g_input, BDM_BUTTON_MENU_A,     (mask & 0x01u) != 0u);
+    bdm_input_set_button(g_input, BDM_BUTTON_MENU_B,     (mask & 0x02u) != 0u);
+    bdm_input_set_button(g_input, BDM_BUTTON_MENU_C,     (mask & 0x04u) != 0u);
+    bdm_input_set_button(g_input, BDM_BUTTON_MENU_D,     (mask & 0x08u) != 0u);
+    bdm_input_set_button(g_input, BDM_BUTTON_MENU_E,     (mask & 0x10u) != 0u);
+    bdm_input_set_button(g_input, BDM_BUTTON_PAGE_LEFT,  (mask & 0x20u) != 0u);
+    bdm_input_set_button(g_input, BDM_BUTTON_PAGE_RIGHT, (mask & 0x40u) != 0u);
     bdm_input_set_pen(g_input, pen_x, pen_y, pen_down != 0u);
 }
 

@@ -91,17 +91,49 @@ uint8_t bdm_input_read_port7(const bdm_input_t *input) {
     if (!input) return 0xff;
     if (input->port7_override_enabled) return input->port7_override;
 
-    /* The A/B/C/D/E and left/right controls on the Design Master are
-       touch-panel/menu controls, not conventional controller action bits.
-       Frontends synthesize stylus taps at the documented panel locations for
-       those controls.  P7 is therefore kept to the observed ready/sense role
-       and the pen contact latch only. */
+    /* P7 is kept to the observed gate-array ready/battery/pen-contact role.
+       The hardware A/B/C/D/E and side page controls are read from the adjacent
+       front-panel port modelled by bdm_input_read_panel_port(). */
     uint8_t v = 0xef;
     v |= 0x80u;                    /* gate-array ready; bit 4 is the active-low battery/sense line */
     if (input->pen_down || input->buttons[BDM_BUTTON_PEN]) {
         v &= (uint8_t)~0x40u;      /* pen/contact sense, tentative */
         v &= (uint8_t)~0x10u;      /* pen edge/debounce, tentative */
     }
+    return v;
+}
+
+bool bdm_input_button_down(const bdm_input_t *input, bdm_button_t button) {
+    return input && button >= 0 && button < BDM_BUTTON_COUNT && input->buttons[button];
+}
+
+uint8_t bdm_input_panel_code(const bdm_input_t *input) {
+    if (!input) return 0u;
+    if (input->buttons[BDM_BUTTON_MENU_A]) return 1u;
+    if (input->buttons[BDM_BUTTON_MENU_B]) return 2u;
+    if (input->buttons[BDM_BUTTON_MENU_C]) return 3u;
+    if (input->buttons[BDM_BUTTON_MENU_D]) return 4u;
+    if (input->buttons[BDM_BUTTON_MENU_E]) return 5u;
+    if (input->buttons[BDM_BUTTON_PAGE_LEFT]) return 6u;
+    if (input->buttons[BDM_BUTTON_PAGE_RIGHT]) return 7u;
+    return 0u;
+}
+
+uint8_t bdm_input_read_panel_port(const bdm_input_t *input) {
+    /* ffba bit 2 is the built-in position-adjust switch path; keep it high for
+       ordinary A-E/page controls.  Some cartridges also look at these bits as
+       active-low switch inputs, but the common firmware decodes the hardware
+       panel into its panel command latch, which bdm_core_step mirrors from
+       bdm_input_panel_code(). */
+    uint8_t v = 0xffu;
+    if (!input) return v;
+    if (input->buttons[BDM_BUTTON_MENU_A])     v &= (uint8_t)~0x01u;
+    if (input->buttons[BDM_BUTTON_MENU_B])     v &= (uint8_t)~0x02u;
+    if (input->buttons[BDM_BUTTON_MENU_C])     v &= (uint8_t)~0x08u;
+    if (input->buttons[BDM_BUTTON_MENU_D])     v &= (uint8_t)~0x10u;
+    if (input->buttons[BDM_BUTTON_MENU_E])     v &= (uint8_t)~0x20u;
+    if (input->buttons[BDM_BUTTON_PAGE_LEFT])  v &= (uint8_t)~0x40u;
+    if (input->buttons[BDM_BUTTON_PAGE_RIGHT]) v &= (uint8_t)~0x80u;
     return v;
 }
 
