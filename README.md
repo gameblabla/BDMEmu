@@ -1,27 +1,52 @@
-# BDMEmu - Emulator for the Bandai Design Master 
+# Bandai Design Master bootstrap emulator
 
-This is a small C11 emulator for the Bandai Design Master / Denshi Mangajuku.
-This is a touchscreen made by Bandai that competed with the Gameboy at the time with its own quirks.
-It was pretty expensive and limited in what it can do, and the specs did not help.
-The only saving grace is perhaps the decently capable 16-bits CPU but everything around it, makes the Gameboy looks next-gen.
+This is a small C11 emulator for the Bandai Design Master / Denshi Mangajuku that can run on the Web or natively for Qt6/Linux or Windows with Win32 backend.
 
-The screen resolution of games, as it has been observed, is 160x120, not 160x150 as it has been widely reported.
+Current scope:
 
-It leveraged the H8-300 16-bits CPU interpreter from MAME and from there, bootstraped itself into supporting more of the hardware.
-The result is that the "G" type cartridges are all playable.
-Sound output is also supported, an auto calibration feature is also enabled by default so you don't have to go through the process yourself.
-Due to the nature of the console, some kind of pointing device is required to make use of it.
-Therefore, a gamepad is not officially supported.
+- Hitachi H8/300-style 16-bit CPU interpreter with enough instructions to leave reset, run the common cartridge startup paths, execute the observed bank-switch thunk, service the timer interrupt path, read touch ADC data, and reach the Dragon Ball Z title/mode menu.
+- MAME-derived base map: cartridge window at `0x0000-0x7fff`, external SRAM from `0x8000-0xfb7f`, H8-family internal RAM at `0xfb80-0xff7f`, and high I/O at `0xff80-0xffff`.
+- Headless frontend.
+- Opaque handles for core, video, input, and sound.
+- Tentative H8 timer-derived sound backend with optional mono 16-bit PCM WAV recording.
+- H8/3334 peripheral model improvements:
+  - Timer16 register layout from MAME's H83337 map: `0xff90` TIER, `0xff91` TSR, `0xff92-0xff93` TCNT, `0xff94-0xff95` observed OCRA, and `0xff96` TCR.  The regular UI/startup interrupt now comes from the modeled counter/compare path rather than a separate artificial interval counter.
+  - Timer8 channel register shadows and counters at `0xffc8-0xffcc` and `0xffd0-0xffd4`; these feed the sound backend and make timer status/counter reads deterministic.
+  - SCI status reads at `0xff8c/0xffdc` return transmitter-ready state, which is closer to the H8 reset behavior than returning the raw erased I/O byte.
+  - Port 6 data writes at `0xffbb` are tracked as resistive-panel drive state for ADC sampling.
+- LCD model for the interface touched by the games:
+  - `0xff80` is treated as LCD/gate-array register index.
+  - `0xff81` is treated as LCD/gate-array register data.
+  - The observed initialization writes register `0x12 = 0x14` and `0x14 = 0x77`, matching a 20-byte stride and 120 active scanlines.
+  - The first `0x960` bytes of SRAM at `0x8000-0x895f` are mapped as a 160x120 1bpp framebuffer, MSB-first, and exported as a 160x120 frame.
+- G-cart bank-latch model:
+  - Writes to `0xff84` update ROM bank A15/A16 using the low two bits.
+  - This matches the copied RAM thunk used by G.01/G.02/G.03: write bank, delay, then `JSR 0x0000`; nonzero banks contain `JMP` vectors at offset zero.
+  - Bit 2 is reserved as a tentative media-cart select when `--media` is loaded.
+- Deterministic port-7/gate-array input placeholder:
+  - `0xffbe` returns port 7.
+  - Bit 7 is kept high as the observed ready/handshake input.
+  - Bit 4 defaults low as the active-low battery/sense line needed by the startup path.
+  - The documented A/B/C/D/E menu strip and left/right page controls are modeled as touch-panel locations, not as controller-style P7 bits. Frontends map keyboard/gamepad buttons to stylus taps at those panel coordinates.
+  - `--port7 HEX` remains available for exact override/fuzzing.
+- H8 ADC model for the resistive touch panel:
+  - `0xffe0-0xffe7` expose four 10-bit sample registers in H8 format.
+  - `0xffe8` is ADCSR and starts a short delayed conversion when ADST is set.
+  - `0xffe9` is ADCR.
+  - Channels 0/1 model the panel vertical voltage; channels 2/3 model horizontal voltage. This channel order is required by the cartridge calibration math.
+  - Port-6 drive values `0x0c`, `0x09`, and `0x06` now affect whether the sampled raw or complementary panel axis is returned, instead of ignoring the electrode drive state completely.
+- Additional H8 coverage for the boot and graphics paths, including register-indirect `JSR @Rn`, memory/absolute bit operations, register `ADDX.B`, byte `DIVXU`, and corrected byte shift/rotate decoding for `SHLR`, `SHAR`, `ROTXL`, `ROTL`, `ROTXR`, and `ROTR`.
+- Raw cartridge graphics preview mode for verifying that cartridge 1bpp art can pass through the LCD renderer.
+- Whole-machine save states through the core API, shared by headless, SDL 1.2, SDL3, Qt6, Win32/Win64, and WASM.  State files include CPU registers/flags/PC, internal/external RAM, LCD registers/VRAM/framebuffer state, fixed-point input/touch state, H8 timer/ADC shadows, cart/media bank state, and sound timer/noise/phase state.  ROM bytes are not embedded, so load the same G/M/BIOS images before loading a state.  The save-state format is intentionally not backward compatible; after the panel-button rewrite, old `.bdmst` files are rejected instead of translated.
 
-
-# TODO
+Not implemented yet:
 
 - Cycle-perfect H8/328/329 peripheral timing.
 - Complete custom HG62G010 gate-array behavior.
 - Confirmed media-cart CE/clock behavior.
-- Exact nonvolatile drawing/media-cart RAM semantics.  External SRAM can now be loaded/saved, but retention, battery state, and media-destructive-use behavior are not fully characterized.
-- Exact sound hardware.  The current implementation is a timer/PWM-style approximation because neither MAME nor the board notes identify a dedicated speaker device.
+- Exact nonvolatile drawing/media-cart RAM semantics.  External SRAM can now be loaded/saved, but retention, battery state, and media-destructive-use behavior are not unknown.
 - Full H8 opcode coverage.
+- Compare this against real hardware in much more details than what i can do
 
 ## Build
 
@@ -53,65 +78,77 @@ make -f Makefile.linux wasm-serve
 # opens http://127.0.0.1:8008/ by default
 ```
 
-The web frontend accepts one G cart, a G cart plus its M media cart, or a ZIP containing `.bin` files. It has both a combined/ZIP loader and separate G-cart / M-media-cart file fields. It auto-detects `[G.xx]` and `[M.xx]` names when present, pairs G/M carts by number when possible, and refuses to boot an M media cart by itself with a clear error. The browser loader also fetches `bdm_wasm_core.wasm` with a cache-busting build id and `cache: 'no-store'`; after replacing an older build, reload the page once so the matching JS/WASM pair is used.
-
-The canvas is a direct touchscreen: pointer/touch events on the 160x120 LCD are converted to stylus coordinates without pointer lock or mouse grabbing. 
-
-Browser and SDL frontends apply a one-cell frontend bias before ADC sampling; 
-
-this compensates for the cartridge calibration math that otherwise reports the touched cell as the next pixel down/right. 
-
-Brief taps are latched by the browser frontend long enough for the emulated ADC/calibration routine to sample them; 
-
-the default hold is 20 ms and can be changed in the Controls panel. Auto calibration assist is enabled by default and can be disabled with the Controls-panel checkbox. 
-
-Keyboard controls and emulator hotkeys are configurable in the browser menu. 
-
-Defaults are `Z`/`X` for A/B, `Enter` for Start, `Right Shift` for Select, `R` reset, `F5` save state, `F8` load state, `F9` scale-mode cycle, and `F11` fullscreen.
 
 ## ROMs
 
-ROMs are not included. They were however, all dumped and shared around.
-
-Pass a raw Design Master G-cartridge dump as the first positional ROM path. 
+ROMs are not included. Pass a raw Design Master G-cartridge dump as the first positional ROM path. Pass a matching raw Design/M-cartridge dump as the second positional path when the game expects its media/cart data. The older `--cart` and `--media` flags remain accepted as compatibility aliases. The optional `--bios` parameter accepts the internal H8 ROM dump if you have it, but the supplied G-cartridge dumps contain reset vectors and can boot without it.
 
 ## Provenance
 
-Hardware facts and memory layout were taken from the MAME `src/mame/bandai/design_master.cpp` driver and Design Master software-list metadata. 
-
-The CPU code was inspired by MAME's.
+Hardware facts and memory layout were taken from the MAME `src/mame/bandai/design_master.cpp` driver and Design Master software-list metadata. No MAME C++ CPU code is embedded here; the C11 interpreter is a compact implementation targeting the observed startup paths.
 
 ## SDL 1.2 frontend
+
+The SDL frontend is kept separate from the headless backend.  The default `make -f Makefile.linux` target still builds `bdm_headless`; when `sdl-config` for SDL 1.2 is available, it also builds `bdm_sdl`.  To require the SDL frontend explicitly:
 
 ```sh
 make -f Makefile.linux sdl
 ```
 
-## SDL 3 frontend
+If SDL 1.2 is installed in a non-standard prefix, override the usual variables:
 
 ```sh
-make -f Makefile.linux sdl3
+make -f Makefile.linux sdl SDL_CONFIG=/opt/sdl12/bin/sdl-config
+# or
+make -f Makefile.linux sdl SDL_CFLAGS="-I/path/to/SDL-1.2/include" SDL_LIBS="-L/path/to/lib -lSDL"
 ```
 
-SDL2 is not supported as newer platforms generally support SDL3 and older platforms would prefer SDL 1.2's software driven approach.
+Run the interactive frontend with a game cart and, when applicable, the matching media cart:
+
+```sh
+./bdm_sdl \
+  --cart "Dragon Ball Z Taisen-gata Search Battle [G.01] (Japan).bin" \
+  --media "Dragon Ball Z [M.01] (Japan).bin"
+```
+
+Useful interactive options:
+
+```sh
+./bdm_sdl --cart game_g.bin game_m.bin --scale 4
+./bdm_sdl --cart game_g.bin game_m.bin --fullscreen
+./bdm_sdl --cart game_g.bin game_m.bin --no-audio
+./bdm_sdl --cart game_g.bin game_m.bin --auto-title
+./bdm_sdl --cart game_g.bin game_m.bin --auto-menu
+./bdm_sdl --cart game_g.bin game_m.bin --dump-wav live_session.wav
+./bdm_sdl --cart game_g.bin game_m.bin --touch-hold-ms 700 --touch-debug
+./bdm_sdl --cart game_g.bin game_m.bin --no-auto-calibrate
+./bdm_sdl --cart game_g.bin game_m.bin --load-sram ext.sram --save-sram ext.sram
+./bdm_sdl --cart game_g.bin game_m.bin --state quick.bdmst
+./bdm_sdl --cart game_g.bin game_m.bin --load-state menu.bdmst --save-state later.bdmst
+```
+
+SDL input mapping:
+
+- Mouse left button maps to the resistive touchscreen/stylus. Window coordinates are divided by the selected integer scale and clipped to the active 160x120 touch/LCD area; optional touch offsets can still be adjusted for frontend calibration experiments. SDL clicks are latched for `--touch-hold-ms` milliseconds, default `20`, so a quick host mouse click is still visible long enough for normal ADC sampling. During visible firmware calibration targets, quick clicks are latched longer using `--calibration-touch-hold-ms`, default `500`, so manual calibration works even when auto-calibration is disabled. SDL 1.2 performs the startup calibration automatically by default; pass `--no-auto-calibrate` to do it manually. Press `F10` at runtime to toggle whether soft reset repeats the calibration assist. When the option is enabled, pressing `R` soft-resets the emulated unit and immediately reruns the same calibration input script; when disabled, reset leaves the firmware calibration screen for manual pen input. Use `--touch-debug` to print converted coordinates and deferred release timing.
+- `A`/`B`/`C`/`D`/`E` map to the top menu strip buttons documented on the unit. `Z`/`X` remain aliases for menu A/B for older user muscle memory.
+- `Left`/`Right` arrows map to the left/right page controls. `[`/`]` also map to left/right; `Backspace`/`Return` remain compatibility aliases.
+- `R` resets the emulated machine.
+- `F5` saves a whole-machine state to `--state` path, default `bdm_state.bdmst`.
+- `F8` loads a whole-machine state from `--state` path.
+- `Escape` or window close quits.
+
+
+## Touch/ADC and auto-calibration behavior in this build
+
+The browser, SDL 1.2, SDL3, Qt6, and native Windows frontends can skip the repetitive initial touchscreen calibration. SDL frontends do it by default during startup and now repeat it on soft reset when the option remains enabled; `F10` toggles this at runtime. The Qt6 and native Windows frontends expose the same option in the Emulation menu. The browser frontend exposes an Auto calibration assist checkbox and, when enabled, fast-forwards calibration immediately after ROM load or soft reset so it no longer waits for a click/focus event. The browser implementation now waits for the actual visible calibration target before injecting a touch, so a load/drop cannot miss the prompt by running too early. The injected events are ordinary stylus touches, not CPU/RAM/VRAM patches.
+
+When auto-calibration is disabled, manual calibration targets are treated specially in the frontend input latch: a short host click on a visible calibration cross is held for 500 ms of emulated time by default, while normal drawing/menu touches still use the ordinary 20 ms latch. This matches the firmware polling cadence during calibration and fixes the previous failure where quick manual clicks were released before the cartridge sampled the ADC. Use `--calibration-touch-hold-ms N` to tune the calibration-only latch.
+
 
 ### Win32 / MinGW-w64
 
 ```sh
 make -f Makefile.win32
-```
-
-This builds `bdm-win32.exe` with the deliberately small Win32 stack: GDI video, waveOut audio, WinMM joystick/gamepad polling, ordinary window-message keyboard input, and Win32 mouse/touch handling. It does not depend on SDL. The Makefile defaults to `i686-w64-mingw32-gcc` when GNU make would otherwise use its built-in host `cc`; override with `make -f Makefile.win32 CC=/path/to/i686-w64-mingw32-gcc` for non-standard toolchain names.
-
-The Win32 build now targets a Windows 95-class dependency profile rather than the earlier Win32s/Windows 3.1 profile. The 32-bit target defines `BDM_WIN32_WIN95`, sets `WINVER=0x0400` / `_WIN32_WINDOWS=0x0400`, and links only the classic Win95-era UI/audio set: `comdlg32`, `user32`, `gdi32`, and `winmm` plus the C runtime selected by the toolchain. ANSI common file dialogs are restored for open/save actions. Win32 still does not use SDL, Raw Input, D3D, WASAPI, Shell32 command-line parsing, AppData/Shell folder APIs, multimon APIs, COM, registry helpers, or common-control status bars. The linker sets the Windows subsystem version to 4.0.
-
-The Win32 frontend is now a native Windows UI rather than a command-line render window. The top-level frame owns a menu bar, recent-ROM submenu, accelerator keys, status line, and a separate LCD child view. File menu actions can open a program ROM, open program+media ROMs, replace the media ROM, reload the current pair, load/save state, quick-save/quick-load, save the LCD frame as PPM, and export captured WAV audio. Emulation, video, audio, and input menus expose pause/reset, load/reset automation toggles, scale/fullscreen, touch offsets including a reset command, touch hold time, optional crosshair cursor, and touch debug logging. The Auto-calibrate item now applies to soft reset as well as ROM load; `F10` toggles it. On Win32 the Audio menu intentionally contains only Enable audio, since the backend is fixed to waveOut when audio is enabled. The GDI video endpoint renders into a persistent off-screen compatible bitmap and then BitBlt-copies the completed frame into the LCD child window, with background erasure disabled on both the frame and LCD view to avoid visible clear/stretch flashing.
-
-Runtime options accepted by the Win32 frontend include the same ROM/state/touch options as the SDL frontends plus:
-
-```sh
---video gdi
---audio waveout|none
 ```
 
 ### Win64 / MinGW-w64
@@ -128,16 +165,6 @@ https://github.com/libsdl-org/SDL/releases/download/release-3.4.10/SDL3-3.4.10.t
 
 If the tarball is not already present under `third_party/sdl/`, the script downloads it with `curl` or `wget`, configures SDL3 with CMake for static MinGW-w64 output, and installs it under `third_party/sdl/install/win64`.
 
-The Win64 frontend is intentionally separate from the SDL3 renderer/audio frontend. It uses the same native Windows UI shell as Win32: menu bar, recent-ROM submenu, accelerators, status bar, open/reload ROM actions, save/load state actions, video/audio/input menus, and a separate LCD child view. It uses Win32 windowing and mouse/keyboard, SDL3 only for gamepad input, WASAPI with waveOut fallback for audio, and selectable audio/video endpoints. The Core Audio COM GUIDs are emitted in the WASAPI translation unit for MinGW-w64, so the Win64 link does not depend on fragile GUID import-library availability or ordering. Runtime options include:
-
-```sh
---video d3d11|gdi
---audio wasapi|waveout|none
-```
-
-The native Windows UI also keeps the normal arrow cursor over the LCD by default; the large crosshair cursor is opt-in from Input > Use touch crosshair cursor. Ctrl+0 resets the touch offset to `(0,0)`.
-
-The Win64 `--video d3d11` endpoint now uses a real D3D11 shader pipeline. The 160x120 LCD framebuffer is uploaded each frame as a dynamic `DXGI_FORMAT_B8G8R8A8_UNORM` texture, rendered through a point-filtered sampler onto a letterboxed triangle strip, and presented through the swap chain. Shader source is embedded in the C file and compiled at runtime through a dynamically loaded `d3dcompiler_47.dll`/older `d3dcompiler_*.dll` if available, so the executable does not link directly against `d3dcompiler`. If D3D11 or shader compilation is unavailable, the frontend falls back to the same double-buffered GDI path and reports `gdi` in the window title. Use `--video gdi` for the fully plain GDI path.
 
 ### Qt6 on Linux
 
@@ -147,7 +174,7 @@ make
 ./BDMEmu game_g.bin game_m.bin
 ```
 
-The Qt frontend is a thin C++/Qt6 UI shell over the C11 core and shared frontend helper. It provides menu-driven ROM loading, save/load state, reset, pause/resume, integer scaling, keyboard controls, direct pen input on the 160x120 LCD, a runtime `Auto-calibrate on load/reset` toggle (`F10`), and live audio output through the same SDL3 audio-stream queue strategy as the SDL3 frontend. The C emulator code remains usable without Qt.
+The Qt frontend is a thin C++/Qt6 UI shell over the C11 core and shared frontend helper. It provides menu-driven ROM loading, save/load state, reset, pause/resume, integer scaling, keyboard controls, direct pen input on the 160x120 LCD, an optional visible A-E/page hardware-button panel from the Input menu, a runtime `Auto-calibrate on load/reset` toggle (`F10`), and live audio output through the same SDL3 audio-stream queue strategy as the SDL3 frontend. The C emulator code remains usable without Qt.
 
 Qt6 live audio requires SDL3 development files visible to `pkg-config` as `sdl3`. If SDL3 is present, qmake defines `BDM_QT_SDL3_AUDIO`, builds `src/qt/SdlAudio.cpp`, opens `SDL_OpenAudioDeviceStream`, queues mono signed 16-bit samples with `SDL_PutAudioStreamData`, and captures that same stream for `--dump-wav`. If SDL3 is not installed, qmake emits a warning and the Qt6 frontend builds without live audio; pass `CONFIG+=no_sdl3_audio` to make that fallback explicit.
 
@@ -159,6 +186,4 @@ make -f Makefile.linux appimage
 packaging/make_appimage.sh
 ```
 
-The AppImage script performs an out-of-source Qt6 release build, stages an AppDir, then uses linuxdeploy and linuxdeploy-plugin-qt. 
-
-Set `QMAKE=/path/to/qmake6` if qmake6 is not on PATH. Set `LINUXDEPLOY` and `LINUXDEPLOY_PLUGIN_QT` to pre-downloaded tools for offline packaging.
+The AppImage script performs an out-of-source Qt6 release build, stages an AppDir, then uses linuxdeploy and linuxdeploy-plugin-qt. Set `QMAKE=/path/to/qmake6` if qmake6 is not on PATH. Set `LINUXDEPLOY` and `LINUXDEPLOY_PLUGIN_QT` to pre-downloaded tools for offline packaging.
