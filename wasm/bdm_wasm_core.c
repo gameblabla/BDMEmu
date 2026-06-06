@@ -81,7 +81,23 @@ static int ensure_machine(void)
     return 1;
 }
 
-static void apply_buttons(uint32_t mask, int pen_x, int pen_y, uint32_t pen_down)
+static int wasm_panel_mask_to_pen_fp(uint32_t mask, int32_t *out_x_fp, int32_t *out_y_fp)
+{
+    int x = 0, y = 0;
+    if (mask & 0x01u) { x = 16;  y = 4;  }
+    else if (mask & 0x02u) { x = 48;  y = 4;  }
+    else if (mask & 0x04u) { x = 80;  y = 4;  }
+    else if (mask & 0x08u) { x = 112; y = 4;  }
+    else if (mask & 0x10u) { x = 144; y = 4;  }
+    else if (mask & 0x20u) { x = 3;   y = 60; }
+    else if (mask & 0x40u) { x = 156; y = 60; }
+    else return 0;
+    if (out_x_fp) *out_x_fp = ((int32_t)x << 16) | 0x8000;
+    if (out_y_fp) *out_y_fp = ((int32_t)y << 16) | 0x8000;
+    return 1;
+}
+
+static void apply_buttons_fp(uint32_t mask, int32_t pen_x_fp, int32_t pen_y_fp, uint32_t pen_down)
 {
     if (!g_input) return;
     bdm_input_set_button(g_input, BDM_BUTTON_MENU_A,     (mask & 0x01u) != 0u);
@@ -91,7 +107,26 @@ static void apply_buttons(uint32_t mask, int pen_x, int pen_y, uint32_t pen_down
     bdm_input_set_button(g_input, BDM_BUTTON_MENU_E,     (mask & 0x10u) != 0u);
     bdm_input_set_button(g_input, BDM_BUTTON_PAGE_LEFT,  (mask & 0x20u) != 0u);
     bdm_input_set_button(g_input, BDM_BUTTON_PAGE_RIGHT, (mask & 0x40u) != 0u);
-    bdm_input_set_pen(g_input, pen_x, pen_y, pen_down != 0u);
+
+    /* Match the native frontends: browser pointer positions are resistive-panel
+       analog coordinates, so keep their 16.16 fraction all the way into the ADC
+       model instead of truncating to an LCD pixel.  If only a hardware-panel
+       button is held, also present the matching physical panel position like the
+       Win32/Win64 input path does. */
+    if (pen_down) {
+        bdm_input_set_pen_fp(g_input, pen_x_fp, pen_y_fp, true);
+    } else {
+        int32_t panel_x_fp = 0, panel_y_fp = 0;
+        if (wasm_panel_mask_to_pen_fp(mask, &panel_x_fp, &panel_y_fp))
+            bdm_input_set_pen_fp(g_input, panel_x_fp, panel_y_fp, true);
+        else
+            bdm_input_set_pen_fp(g_input, pen_x_fp, pen_y_fp, false);
+    }
+}
+
+static void apply_buttons(uint32_t mask, int pen_x, int pen_y, uint32_t pen_down)
+{
+    apply_buttons_fp(mask, (int32_t)pen_x << 16, (int32_t)pen_y << 16, pen_down);
 }
 
 __attribute__((export_name("bdm_wasm_version")))
@@ -167,11 +202,11 @@ uint32_t bdm_wasm_start(void)
 __attribute__((export_name("bdm_wasm_soft_reset")))
 uint32_t bdm_wasm_soft_reset(void) { return bdm_wasm_start(); }
 
-__attribute__((export_name("bdm_wasm_frame")))
-uint32_t bdm_wasm_frame(uint32_t steps, uint32_t button_mask, int32_t pen_x, int32_t pen_y, uint32_t pen_down)
+__attribute__((export_name("bdm_wasm_frame_fp")))
+uint32_t bdm_wasm_frame_fp(uint32_t steps, uint32_t button_mask, int32_t pen_x_fp, int32_t pen_y_fp, uint32_t pen_down)
 {
     if (!g_core || g_status != BDM_WASM_STATUS_RUNNING) return 0u;
-    apply_buttons(button_mask, (int)pen_x, (int)pen_y, pen_down);
+    apply_buttons_fp(button_mask, pen_x_fp, pen_y_fp, pen_down);
     if (!steps) steps = g_steps_per_second / 60u;
     uint64_t ran = bdm_core_run_steps(g_core, steps, true);
     (void)ran;
@@ -191,10 +226,40 @@ uint32_t bdm_wasm_frame(uint32_t steps, uint32_t button_mask, int32_t pen_x, int
     return g_status == BDM_WASM_STATUS_RUNNING ? 1u : 0u;
 }
 
+__attribute__((export_name("bdm_wasm_frame")))
+uint32_t bdm_wasm_frame(uint32_t steps, uint32_t button_mask, int32_t pen_x, int32_t pen_y, uint32_t pen_down)
+{
+    return bdm_wasm_frame_fp(steps, button_mask, (int32_t)pen_x << 16, (int32_t)pen_y << 16, pen_down);
+}
+
+__attribute__((export_name("bdm_wasm_set_input_fp")))
+void bdm_wasm_set_input_fp(uint32_t button_mask, int32_t pen_x_fp, int32_t pen_y_fp, uint32_t pen_down)
+{
+    apply_buttons_fp(button_mask, pen_x_fp, pen_y_fp, pen_down);
+}
+
 __attribute__((export_name("bdm_wasm_set_input")))
 void bdm_wasm_set_input(uint32_t button_mask, int32_t pen_x, int32_t pen_y, uint32_t pen_down)
 {
     apply_buttons(button_mask, (int)pen_x, (int)pen_y, pen_down);
+}
+
+__attribute__((export_name("bdm_wasm_get_steps_lo")))
+uint32_t bdm_wasm_get_steps_lo(void)
+{
+    bdm_core_state_t st;
+    memset(&st, 0, sizeof(st));
+    if (g_core) bdm_core_get_state(g_core, &st);
+    return (uint32_t)st.steps;
+}
+
+__attribute__((export_name("bdm_wasm_get_steps_hi")))
+uint32_t bdm_wasm_get_steps_hi(void)
+{
+    bdm_core_state_t st;
+    memset(&st, 0, sizeof(st));
+    if (g_core) bdm_core_get_state(g_core, &st);
+    return (uint32_t)(st.steps >> 32);
 }
 
 __attribute__((export_name("bdm_wasm_get_status")))

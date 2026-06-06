@@ -28,7 +28,7 @@ const PANEL_BUTTON_MASKS = {
 const STATUS_TEXT = { 0: 'empty', 1: 'ready', 3: 'running', 5: 'error' };
 const FRAME_RATE = 60;
 const STORE_KEY = 'bdm-wasm-config-v1';
-const WASM_BUILD_ID = 'bdm-wasm-20260605-panel-port-buttons';
+const WASM_BUILD_ID = 'bdm-wasm-20260607-touch-fp-step-latch';
 const ROM_MAX_BYTES = 128 * 1024;
 
 let config = loadConfig();
@@ -42,7 +42,7 @@ let loading = false;
 let pressed = new Set();
 let remapTarget = null;
 let activeGame = null;
-let pen = { x: 0, y: 0, physicalDown: false, pointerId: null, holdUntil: 0, latchedFrames: 0 };
+let pen = { x: 0, y: 0, xFp: 0, yFp: 0, physicalDown: false, pointerId: null, holdUntilSteps: 0 };
 let lastTouchStatusAt = 0;
 let limiterLast = 0;
 let limiterAcc = 0;
@@ -458,8 +458,20 @@ function buttonsMask() {
   for (const [name, bit] of Object.entries(BUTTON_BITS)) if (pressed.has(config.keys[name])) m |= bit;
   return m >>> 0;
 }
-function effectivePenDown(now = performance.now()) {
-  return !!pen.physicalDown || now < pen.holdUntil || pen.latchedFrames > 0;
+function currentCoreSteps() {
+  if (wasm?.bdm_wasm_get_steps_lo) {
+    const lo = wasm.bdm_wasm_get_steps_lo() >>> 0;
+    const hi = wasm.bdm_wasm_get_steps_hi ? (wasm.bdm_wasm_get_steps_hi() >>> 0) : 0;
+    return hi * 4294967296 + lo;
+  }
+  return ((wasm?.bdm_wasm_get_frame_count?.() || 0) >>> 0) * frameSteps();
+}
+function msToSteps(ms) {
+  const m = Math.max(0, Number(ms) || 0);
+  return Math.max(1, Math.round((Number(config.stepsPerSecond) || 2000000) * m / 1000));
+}
+function effectivePenDown() {
+  return !!pen.physicalDown || currentCoreSteps() < pen.holdUntilSteps;
 }
 function activePanelMask() {
   let mask = 0;
@@ -472,14 +484,19 @@ function activePanelMask() {
   if (pressed.has('BracketRight') || pressed.has('Enter')) mask |= PANEL_BUTTON_MASKS.PageRight;
   return mask >>> 0;
 }
-function currentInput(now = performance.now()) {
+function currentInput() {
   const mask = activePanelMask();
-  if (effectivePenDown(now)) return { mask, x: pen.x | 0, y: pen.y | 0, down: 1 };
-  return { mask, x: pen.x | 0, y: pen.y | 0, down: 0 };
+  return {
+    mask,
+    x: pen.x | 0, y: pen.y | 0,
+    xFp: pen.xFp | 0, yFp: pen.yFp | 0,
+    down: effectivePenDown() ? 1 : 0
+  };
 }
-function sendInput(now = performance.now()) {
-  const inp = currentInput(now);
-  if (wasm?.bdm_wasm_set_input) wasm.bdm_wasm_set_input(inp.mask, inp.x, inp.y, inp.down);
+function sendInput() {
+  const inp = currentInput();
+  if (wasm?.bdm_wasm_set_input_fp) wasm.bdm_wasm_set_input_fp(inp.mask, inp.xFp, inp.yFp, inp.down);
+  else if (wasm?.bdm_wasm_set_input) wasm.bdm_wasm_set_input(inp.mask, inp.x, inp.y, inp.down);
 }
 function resetAutoCalibration(start = false) {
   autoCal = { active: !!start && !!config.autoCalibration, stage: start && config.autoCalibration ? 'search' : 'idle', frame: 0, done: false, taps: 0 };
@@ -542,19 +559,27 @@ function detectCalibrationTarget() {
   }
   return null;
 }
-function runFrameWithInput(x, y, down) {
+function runFrameWithInputFp(xFp, yFp, down, mask = 0) {
   if (!wasm || wasm.bdm_wasm_get_status?.() !== 3) return false;
-  const ok = wasm.bdm_wasm_frame(frameSteps(), 0, x | 0, y | 0, down ? 1 : 0);
+  let ok;
+  if (wasm.bdm_wasm_frame_fp) ok = wasm.bdm_wasm_frame_fp(frameSteps(), mask >>> 0, xFp | 0, yFp | 0, down ? 1 : 0);
+  else ok = wasm.bdm_wasm_frame(frameSteps(), mask >>> 0, (xFp >> 16) | 0, (yFp >> 16) | 0, down ? 1 : 0);
   pullAudio();
   return !!ok;
+}
+function runFrameWithInput(x, y, down, mask = 0) {
+  return runFrameWithInputFp((x | 0) << 16, (y | 0) << 16, down, mask);
+}
+function runFrameWithCurrentInput() {
+  const inp = currentInput();
+  return runFrameWithInputFp(inp.xFp, inp.yFp, inp.down, inp.mask);
 }
 function autoCalibrationInput() { return null; }
 function runInputBurst(frames, x = pen.x, y = pen.y, down = true) {
   if (!wasm || wasm.bdm_wasm_get_status?.() !== 3 || paused || loading) return 0;
   let ran = 0;
   for (; ran < frames; ++ran) {
-    if (!runFrameWithInput(x, y, down)) break;
-    if (!down && pen.latchedFrames > 0) --pen.latchedFrames;
+    if (!runFrameWithInput(x, y, down, activePanelMask())) break;
   }
   renderOnce();
   resetFrameLimiter();
@@ -623,7 +648,7 @@ function schedulePostLoadKick(frames = 120) {
   const kick = () => {
     if (!wasm || paused || loading || wasm.bdm_wasm_get_status?.() !== 3) { kickTimer = 0; return; }
     maybeRealtimeAutoCalibration();
-    runFrameWithInput(pen.x | 0, pen.y | 0, effectivePenDown() ? 1 : 0);
+    runFrameWithCurrentInput();
     renderOnce();
     if (--remaining > 0) kickTimer = setTimeout(kick, 0);
     else { kickTimer = 0; resetFrameLimiter(); }
@@ -635,10 +660,11 @@ function schedulePostLoadKick(frames = 120) {
 function clearPen(send = true) {
   pen.x = 0;
   pen.y = 0;
+  pen.xFp = 0;
+  pen.yFp = 0;
   pen.physicalDown = false;
   pen.pointerId = null;
-  pen.holdUntil = 0;
-  pen.latchedFrames = 0;
+  pen.holdUntilSteps = 0;
   if (send) sendInput();
 }
 function eventClientPoint(e) {
@@ -649,8 +675,21 @@ function eventClientPoint(e) {
 }
 const TOUCH_PIXEL_BIAS_X = 0;
 const TOUCH_PIXEL_BIAS_Y = 0;
+const PEN_FP_ONE = 65536;
+const PEN_MAX_X_FP = (160 * PEN_FP_ONE) - 1;
+const PEN_MAX_Y_FP = (120 * PEN_FP_ONE) - 1;
 function clampPenX(x) { return Math.max(0, Math.min(159, x | 0)); }
 function clampPenY(y) { return Math.max(0, Math.min(119, y | 0)); }
+function clampPenXfp(x) { return Math.max(0, Math.min(PEN_MAX_X_FP, x | 0)); }
+function clampPenYfp(y) { return Math.max(0, Math.min(PEN_MAX_Y_FP, y | 0)); }
+function floatToFp(v) {
+  v = Number(v);
+  if (!Number.isFinite(v)) return 0;
+  if (v <= -32768) return -2147483648;
+  if (v >= 32767) return 2147418112;
+  return Math.trunc(v * PEN_FP_ONE) | 0;
+}
+function fpToPen(xFp, yFp) { return [clampPenX(xFp >> 16), clampPenY(yFp >> 16)]; }
 function exactDisplayPixelToPen(x, y) {
   return [clampPenX(x | 0), clampPenY(y | 0)];
 }
@@ -658,6 +697,13 @@ function correctedDisplayPixelToPen(x, y) {
   const ox = Number.isFinite(config.touchOffsetX) ? config.touchOffsetX : TOUCH_PIXEL_BIAS_X;
   const oy = Number.isFinite(config.touchOffsetY) ? config.touchOffsetY : TOUCH_PIXEL_BIAS_Y;
   return [clampPenX((x | 0) + ox), clampPenY((y | 0) + oy)];
+}
+function exactDisplayPixelToPenFp(x, y) {
+  return [clampPenXfp((x | 0) << 16), clampPenYfp((y | 0) << 16)];
+}
+function correctedDisplayPixelToPenFp(x, y) {
+  const [ix, iy] = correctedDisplayPixelToPen(x, y);
+  return [clampPenXfp(ix << 16), clampPenYfp(iy << 16)];
 }
 function visibleCalibrationTarget() {
   return !!detectCalibrationTarget();
@@ -669,14 +715,32 @@ function displayPixelToPen(x, y, opts = {}) {
   if (opts.unbiased) return exactDisplayPixelToPen(x, y);
   return correctedDisplayPixelToPen(x, y);
 }
-function canvasPoint(e) {
+function displayPixelToPenFp(x, y, opts = {}) {
+  if (opts.unbiased) return exactDisplayPixelToPenFp(x, y);
+  return correctedDisplayPixelToPenFp(x, y);
+}
+function logicalToPenFp(lx, ly, opts = {}) {
+  let xFp = floatToFp(lx);
+  let yFp = floatToFp(ly);
+  if (!opts.unbiased && !shouldUseUnbiasedTouchForCalibration()) {
+    const ox = Number.isFinite(config.touchOffsetX) ? config.touchOffsetX : TOUCH_PIXEL_BIAS_X;
+    const oy = Number.isFinite(config.touchOffsetY) ? config.touchOffsetY : TOUCH_PIXEL_BIAS_Y;
+    xFp += (ox | 0) << 16;
+    yFp += (oy | 0) << 16;
+  }
+  return [clampPenXfp(xFp), clampPenYfp(yFp)];
+}
+function canvasPointFp(e) {
   const r = els.canvas.getBoundingClientRect();
   const pt = eventClientPoint(e);
-  const clientX = pt ? pt[0] : r.left + r.width * (pen.x + 0.5) / 160;
-  const clientY = pt ? pt[1] : r.top + r.height * (pen.y + 0.5) / 120;
-  const dx = Math.max(0, Math.min(159, Math.floor(((clientX - r.left) * 160 / Math.max(1, r.width)) - 1e-7)));
-  const dy = Math.max(0, Math.min(119, Math.floor(((clientY - r.top) * 120 / Math.max(1, r.height)) - 1e-7)));
-  return displayPixelToPen(dx, dy);
+  const clientX = pt ? pt[0] : r.left + r.width * ((pen.xFp / PEN_FP_ONE) + 0.5) / 160;
+  const clientY = pt ? pt[1] : r.top + r.height * ((pen.yFp / PEN_FP_ONE) + 0.5) / 120;
+  const lx = ((clientX - r.left) * 160) / Math.max(1, r.width);
+  const ly = ((clientY - r.top) * 120) / Math.max(1, r.height);
+  return logicalToPenFp(lx, ly);
+}
+function canvasPoint(e) {
+  return fpToPen(...canvasPointFp(e));
 }
 function reportTouchDebug(down, x, y) {
   const now = performance.now();
@@ -685,20 +749,24 @@ function reportTouchDebug(down, x, y) {
   status(down ? `touch ${x},${y}` : 'touch released', down ? 'status-ok' : '');
 }
 function pressPenFromEvent(e) {
-  const [x, y] = canvasPoint(e);
+  const [xFp, yFp] = canvasPointFp(e);
+  const [x, y] = fpToPen(xFp, yFp);
+  pen.xFp = xFp;
+  pen.yFp = yFp;
   pen.x = x;
   pen.y = y;
   pen.physicalDown = true;
   const holdMs = visibleCalibrationTarget() ? Math.max(config.touchHoldMs || 0, config.calibrationTouchHoldMs || 0) : Math.max(0, config.touchHoldMs || 0);
-  pen.holdUntil = Math.max(pen.holdUntil, performance.now() + holdMs);
-  pen.latchedFrames = Math.max(pen.latchedFrames, Math.max(1, config.touchBurstFrames || 3));
+  pen.holdUntilSteps = Math.max(pen.holdUntilSteps, currentCoreSteps() + msToSteps(holdMs));
   sendInput();
-  runInputBurst(Math.max(1, config.touchBurstFrames || 3), pen.x, pen.y, true);
   reportTouchDebug(true, pen.x, pen.y);
 }
 function movePenFromEvent(e) {
   if (!pen.physicalDown) return;
-  const [x, y] = canvasPoint(e);
+  const [xFp, yFp] = canvasPointFp(e);
+  const [x, y] = fpToPen(xFp, yFp);
+  pen.xFp = xFp;
+  pen.yFp = yFp;
   pen.x = x;
   pen.y = y;
   sendInput();
@@ -709,19 +777,13 @@ function releasePen() {
      can be delivered after the cursor has drifted outside the LCD, and the
      minimum-hold latch would otherwise keep sampling that stale edge position. */
   pen.physicalDown = false;
-  pen.latchedFrames = Math.max(pen.latchedFrames, Math.max(1, config.touchBurstFrames || 3));
   sendInput();
   reportTouchDebug(effectivePenDown(), pen.x, pen.y);
 }
 function runStartupFrames(count) {
   if (!wasm || wasm.bdm_wasm_get_status?.() !== 3) return;
   const n = Math.max(0, Math.min(120, count | 0));
-  const steps = Math.max(1, Math.round(config.stepsPerSecond / FRAME_RATE));
-  for (let i = 0; i < n; ++i) {
-    { const inp = currentInput(); wasm.bdm_wasm_frame(steps, inp.mask, inp.x, inp.y, inp.down); }
-    if (!pen.physicalDown && pen.latchedFrames > 0) --pen.latchedFrames;
-    pullAudio();
-  }
+  for (let i = 0; i < n; ++i) runFrameWithCurrentInput();
 }
 
 function applyVideoLayout(w = 160, h = 120) {
@@ -782,9 +844,7 @@ function tick(now) {
     let ran = 0;
     while (limiterAcc >= interval && ran < 4) {
       if (maybeRealtimeAutoCalibration()) { limiterAcc -= interval; ran++; continue; }
-      { const inp = currentInput(now); wasm.bdm_wasm_frame(frameSteps(), inp.mask, inp.x, inp.y, inp.down); }
-      if (!pen.physicalDown && pen.latchedFrames > 0) --pen.latchedFrames;
-      pullAudio();
+      runFrameWithCurrentInput();
       limiterAcc -= interval;
       ran++;
     }
